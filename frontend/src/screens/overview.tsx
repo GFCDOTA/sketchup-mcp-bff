@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Pipeline } from "@/components/pipeline";
 import { LiveActivity } from "@/components/live-activity";
+import { GatePulse } from "@/components/gate-pulse";
 import { AgentStage } from "@/components/agent-stage";
 import { EmptyState } from "@/components/states";
 import { AnimatedSection, staggerContainer, staggerItem } from "@/components/flow/animated-section";
@@ -128,8 +129,12 @@ export default function Overview() {
           </Card>
         </AnimatedSection>
 
-        {/* decisões + sistema */}
+        {/* gate + decisões + sistema */}
         <div className="col-span-12 space-y-4 lg:col-span-5">
+          <AnimatedSection delay={0.03}>
+            <GatePulse />
+          </AnimatedSection>
+
           <AnimatedSection delay={0.05}>
             <Card accent="gold">
               <CardHeader>
