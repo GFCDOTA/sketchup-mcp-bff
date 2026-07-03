@@ -75,7 +75,7 @@ export const artifactDocs: ArtifactDoc[] = [
   },
   {
     "type": "runs do cockpit (in-memory RUNS via /api/runs)",
-    "description": "Histórico de runs de agente/workflow exibido no cockpit, com steps (plan/execute/verify) e logs ao vivo (SSE). Semeado de sessions.claims do upstream; novos runs são disparados pelo runner STUB (_runner simula steps + uma falha pseudo-determinística no 'verify').",
+    "description": "Histórico de runs de agente/workflow exibido no cockpit, com steps (plan/execute/verify) e logs ao vivo (SSE). Semeado de sessions.claims do state espelhado por arquivo; novos runs são disparados pelo runner STUB (_runner simula steps + uma falha pseudo-determinística no 'verify').",
     "examplePath": "D:/Claude/sketchup-mcp-bff/cockpit_api.py (RUNS dict, _start_run/_runner)",
     "origin": "cockpit_api.py (_seed_runs a partir de /api/state; _start_run via POST /api/{agents,workflows}/<id>/run)",
     "lifecycle": "queued → running → succeeded/failed; volátil (em memória, perde no restart). É o ponto de plugue pra um runner real",

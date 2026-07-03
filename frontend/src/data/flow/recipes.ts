@@ -147,7 +147,7 @@ export const recipes: Recipe[] = [
     "checklist": [
       "card aparece em GET /api/workflows como canned (steps fixos ingest/judge/approve)",
       "POST /api/workflows/curate-refpack/run dispara o runner STUB (não cura de verdade)",
-      "a curadoria REAL acontece via reference_packs.curate no upstream :8781, não pelo card"
+      "a curadoria REAL acontece via reference_packs.curate no repo do motor, não pelo card"
     ],
     "risks": [
       "O card é ilustrativo: status/steps são hardcoded em _derive_workflows, não refletem um pack real",
@@ -196,7 +196,7 @@ export const recipes: Recipe[] = [
   {
     "id": "cycle-fidelity",
     "name": "Ciclo de fidelidade do asset (workflow principal do cockpit)",
-    "whenToUse": "Workflow 'main' derivado pelo cockpit a partir do factory_state (cycles.factory_state) do upstream. Leva um asset de referência → curadoria → build → render V-Ray validado. Reflete o ciclo ATIVO (ex.: CYCLE-003).",
+    "whenToUse": "Workflow 'main' derivado pelo cockpit a partir do factory espelhado por ARQUIVO (studio_mirror.factory_view ← .ai_bridge/interior_cycles/). Leva um asset de referência → curadoria → build → render V-Ray validado. Reflete o ciclo ATIVO (ex.: CYCLE-003).",
     "inputs": [
       "Reference Pack",
       "planta (PDF)"
@@ -213,12 +213,12 @@ export const recipes: Recipe[] = [
     "checklist": [
       "GET /api/workflows monta este card com steps DERIVADOS do pipeline do foco ativo (active_focuses[0].pipeline)",
       "status 'running' se factory_state.has_cycle, senão 'idle'",
-      "risks vindos de learning.anti_patterns reais do upstream",
+      "risks vindos de learning.anti_patterns reais lidos dos arquivos do motor",
       "disparo (POST /run) usa o runner STUB — não roda a esteira real"
     ],
     "risks": [
       "Os steps refletem o estado real do ciclo, MAS o disparo é stub (não executa o ciclo de verdade)",
-      "Depende do upstream :8781 estar vivo; senão _upstream_state retorna {} e o card degrada",
+      "Depende do motor legível em ENGINE_ROOT; senão o state espelhado vem vazio e o card degrada",
       "lastRunId sempre None (não liga o card a um run real)"
     ],
     "runbook": [

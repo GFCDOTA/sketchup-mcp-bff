@@ -71,7 +71,7 @@ function ArchFlow() {
       {/* serviços externos (processos separados, com porta) */}
       <div className="flex flex-col gap-2">
         <Node icon={Cpu} title="Ollama" sub=":11434 · modelos" />
-        <Node icon={Network} title="Upstream" sub=":8781 · dados" />
+        <Node icon={Network} title="Motor" sub="arquivos · studio_mirror" />
       </div>
     </div>
   );
@@ -167,7 +167,7 @@ export default function Docs() {
             </p>
             <Callout tone="gold" icon={ShieldCheck}>
               <b>Princípio de arquitetura:</b> o frontend fala <b>só</b> com <code>/api/*</code>. Quem conversa
-              com modelos locais, com o dashboard legado e com o runner de agents é o <b>BFF</b> — nunca o React.
+              com modelos locais, com os arquivos do motor e com o runner de agents é o <b>BFF</b> — nunca o React.
             </Callout>
           </Section>
 
@@ -175,7 +175,8 @@ export default function Docs() {
             <p>
               O <b>Cockpit</b> é um app React servido pelo próprio <b>BFF</b> (Python, stdlib) na
               <code>:8782</code> — mesma origem para a UI e para a API. O BFF é o <b>ponto único de
-              integração</b>: fala com o Ollama, executa os runs e faz proxy do <code>/api/state</code> legado.
+              integração</b>: fala com o Ollama, executa os runs e monta o <code>/api/state</code> lendo os
+              <b> arquivos do motor</b> (studio_mirror — a porta :8781 não é mais dependência).
               Você só abre <code>http://localhost:8782</code>.
             </p>
             <ArchFlow />
@@ -183,9 +184,7 @@ export default function Docs() {
             <CodeBlock>
               <span className="k"># 1) build do cockpit (uma vez) → frontend/dist</span>{"\n"}
               cd frontend && npm run build && cd ..{"\n"}
-              <span className="k"># 2) upstream (dados) — a porta 8781 é obrigatória</span>{"\n"}
-              python ../sketchup-mcp/tools/studio_dashboard.py --port 8781{"\n"}
-              <span className="k"># 3) BFF: serve o cockpit + API → http://localhost:8782</span>{"\n"}
+              <span className="k"># 2) BFF: serve o cockpit + API → http://localhost:8782 (lê o motor por arquivo)</span>{"\n"}
               python server.py
             </CodeBlock>
             <Callout tone="info">
@@ -240,7 +239,7 @@ export default function Docs() {
             {state.isLoading ? (
               <p className="text-muted-foreground/60">carregando…</p>
             ) : knowledge.length === 0 ? (
-              <Callout tone="info">Nenhuma entrada agora (o upstream pode estar offline). Suba o dashboard legado na :8781 para popular.</Callout>
+              <Callout tone="info">Nenhuma entrada agora (os arquivos do motor podem estar ausentes). Confira o BFF_ENGINE_ROOT e alimente o architect.md.</Callout>
             ) : (
               <div className="grid gap-3 sm:grid-cols-2">
                 {knowledge.map((e, i) => (
@@ -258,7 +257,7 @@ export default function Docs() {
           <Section id="api" title="Contrato da API (BFF)" icon={Terminal}>
             <p>O frontend consome estes endpoints (tipos em <code>src/api/types.ts</code>):</p>
             <CodeBlock>
-              GET  /api/status              <span className="k"># saúde (upstream + ollama)</span>{"\n"}
+              GET  /api/status              <span className="k"># saúde (motor por arquivo + ollama)</span>{"\n"}
               GET  /api/models              <span className="k"># modelos do Ollama</span>{"\n"}
               POST /api/models/chat         <span className="k"># chat (via BFF, nunca direto)</span>{"\n"}
               GET  /api/agents{"\n"}

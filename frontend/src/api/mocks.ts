@@ -39,7 +39,7 @@ const sec = (s: number): number => s * 1_000;
 // GET /api/status
 // ────────────────────────────────────────────────────────────────────────────
 export const status: StatusResponse = {
-  upstream: { ok: true, url: "http://localhost:8782" },
+  upstream: { ok: true, url: "E:/Claude/apps/sketchup-mcp" },   // motor legível por ARQUIVO (semântica nova)
   ollama: { ok: true, url: "http://localhost:11434", models: 3 },
   time: iso(),
 };
@@ -618,7 +618,7 @@ export const fileEvents: FileEventsResponse = {
   events: [
     { id: "ev-1", seq: 1, ts: iso(-sec(11)), repo: "sketchup-mcp-bff", path: "sketchup-mcp-bff/cockpit_api.py", op: "execute", source: "bff", status: "ok", endpoint: "/api/agents", label: "GET /api/agents" },
     { id: "ev-2", seq: 2, ts: iso(-sec(10)), repo: "sketchup-mcp-bff", path: "sketchup-mcp-bff/cockpit_api.py", op: "execute", source: "bff", status: "ok", endpoint: "/api/agents", label: "deriva agents (de /api/state)" },
-    { id: "ev-3", seq: 3, ts: iso(-sec(8)), repo: "external", path: "upstream:/api/state", op: "proxy", source: "upstream", status: "ok", endpoint: "/api/state", label: "read /api/state (upstream :8781)" },
+    { id: "ev-3", seq: 3, ts: iso(-sec(8)), repo: "sketchup-mcp", path: "sketchup-mcp/.ai_bridge/", op: "read", source: "bff", status: "ok", endpoint: "/api/state", label: "read state (studio_mirror, por arquivo)" },
     { id: "ev-4", seq: 4, ts: iso(-sec(6)), repo: "external", path: "ollama:/api/tags", op: "proxy", source: "ollama", status: "ok", endpoint: "/api/tags", label: "Ollama /api/tags (online)" },
     { id: "ev-5", seq: 5, ts: iso(-sec(3)), repo: "sketchup-mcp-bff", path: "sketchup-mcp-bff/cockpit_api.py", op: "execute", source: "runner", status: "ok", runId: "run_2026_0628_build_35", label: "run agent criado (runner STUB)", confidence: "low" },
     { id: "ev-6", seq: 6, ts: iso(-sec(1)), repo: "sketchup-mcp", path: "sketchup-mcp/artifacts/planta_74/furnished/sofa_v4.png", op: "read", source: "bff", status: "ok", label: "artifact render listado" },

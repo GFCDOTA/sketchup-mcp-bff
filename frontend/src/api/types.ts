@@ -14,7 +14,7 @@ export interface OkResponse {
 
 /* ───────────────────────────── GET /api/status ───────────────────────────── */
 
-/** Saúde de um serviço a montante (upstream legado, ollama, etc.). */
+/** Saúde de uma dependência (chave `upstream` = motor legível por ARQUIVO, ollama, etc.). */
 export interface ServiceHealth {
   ok: boolean;
   url: string;

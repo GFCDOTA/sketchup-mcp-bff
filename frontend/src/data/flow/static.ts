@@ -21,23 +21,22 @@ export const responsibilityCards: ResponsibilityCard[] = [
 
 export const setupCommands: { label: string; cmd: string }[] = [
   { label: "1) Build do cockpit (uma vez)", cmd: "cd frontend && npm install && npm run build && cd .." },
-  { label: "2) Upstream — dados (porta 8781 obrigatória)", cmd: "python ../sketchup-mcp/tools/studio_dashboard.py --port 8781" },
-  { label: "3) BFF — serve o cockpit + API na :8782", cmd: "python server.py" },
+  { label: "2) BFF — serve o cockpit + API na :8782 (dados lidos por ARQUIVO do motor)", cmd: "python server.py" },
   { label: "Dev do front com HMR (opcional)", cmd: "cd frontend && npm run dev" },
   { label: "Só visual, sem backend (mocks tipados)", cmd: "VITE_MOCKS=1 npm run dev" },
   { label: "Subir os modelos locais", cmd: "ollama serve" },
 ];
 
 export const troubleshootingItems: TroubleshootingItem[] = [
-  { problem: "Porta ocupada (:8782 / :8781 / :5173)",
+  { problem: "Porta ocupada (:8782 / :5173)",
     cause: "Outra instância (ou um dev server) ainda está de pé na porta.",
     fix: "Mate o processo da porta e suba de novo. Em dev, o BFF roda na :8782 e o Vite na :5173 — não conflitam." },
   { problem: "Ollama fora do ar (:11434)",
     cause: "O runtime de modelos não está rodando.",
     fix: "`ollama serve`. As telas Modelos/chat tratam offline graciosamente (status + hint), sem quebrar." },
-  { problem: "Upstream indisponível (:8781)",
-    cause: "O studio_dashboard.py (dados legados) não está rodando.",
-    fix: "Suba com `--port 8781` (o script usa 8782 por padrão). Sem ele, /api/state responde 502 e o cockpit mostra vazio/erro." },
+  { problem: "Painéis do Estúdio vazios (agents/renders/decisions)",
+    cause: "O studio_mirror não achou os arquivos do motor — ENGINE_ROOT errado ou ausente.",
+    fix: "Confira BFF_ENGINE_ROOT (default: pasta irmã ../sketchup-mcp). O painel degrada honesto (vazio), nunca inventa dado." },
   { problem: "O dashboard não reflete a mudança do front",
     cause: "O BFF serve o build (frontend/dist), não o código-fonte.",
     fix: "`npm run build` em frontend/ e dê refresh na :8782 (ou use `npm run dev` na :5173 com HMR)." },

@@ -3,19 +3,23 @@ import type { TreeNode } from "./types";
 export const bffTree: TreeNode[] = [
   {
     "path": "sketchup-mcp-bff/server.py",
-    "role": "BFF principal (:8782) — serve frontend/dist + faz dispatch para cockpit_api e proxy /api/* /img/* p/ upstream :8781; modo BFF_MOCK lê mocks/"
+    "role": "BFF principal (:8782) — serve frontend/dist + faz dispatch para cockpit_api; /api desconhecido → 404 JSON, vitrine retirada → 410; modo BFF_MOCK lê mocks/"
   },
   {
     "path": "sketchup-mcp-bff/cockpit_api.py",
-    "role": "Endpoints nativos do cockpit (status/models/chat/agents/runs/workflows/artifacts/decisions); chat Ollama REAL, runner de runs STUB"
+    "role": "Endpoints nativos do cockpit (status/models/chat/agents/runs/workflows/artifacts/decisions + state/kgraph/consult/img via studio_mirror); chat Ollama REAL, runner de runs STUB"
+  },
+  {
+    "path": "sketchup-mcp-bff/studio_mirror.py",
+    "role": "Espelho por ARQUIVO do estúdio (:8781 aposentado) — /api/state completo, kgraph, consult e imagens lidos direto do repo do motor; única escrita = mover proposta aprovada/rejeitada"
   },
   {
     "path": "sketchup-mcp-bff/mocks/state.sample.json",
-    "role": "Snapshot real do /api/state legado (40KB) servido quando BFF_MOCK=1 (sem upstream)"
+    "role": "Snapshot real do /api/state (40KB) servido quando BFF_MOCK=1 (sem motor no disco)"
   },
   {
     "path": "sketchup-mcp-bff/docs/ARCHITECTURE.md",
-    "role": "Doc da arquitetura BFF (diagrama browser→:8782→:8781, tabela de roteamento e fontes de dados)"
+    "role": "Doc da arquitetura BFF (diagrama browser→:8782→arquivos do motor, tabela de roteamento e fontes de dados)"
   },
   {
     "path": "sketchup-mcp-bff/docs/INSPECTION.md",
@@ -86,7 +90,7 @@ export const engineTree: TreeNode[] = [
   },
   {
     "path": "sketchup-mcp/tools/studio_dashboard.py",
-    "role": "UPSTREAM legado (:8781) que o BFF proxia — serve /api/state, /api/proposal, /api/kgraph, /api/consult/*"
+    "role": "Dashboard legado do motor (:8781) — NÃO é mais dependência do cockpit: o studio_mirror lê os mesmos arquivos direto"
   },
   {
     "path": "sketchup-mcp/tools/build_plan_shell_skp.py",
@@ -126,7 +130,7 @@ export const engineTree: TreeNode[] = [
   },
   {
     "path": "sketchup-mcp/tools/vitrine/",
-    "role": "Páginas-vitrine legadas (explica/grafo/flow/agents .html) servidas pelo dashboard upstream"
+    "role": "Páginas-vitrine legadas (explica/grafo/flow/agents .html) — retiradas do cockpit (410); só o kgraph.json ainda é lido (/api/kgraph)"
   },
   {
     "path": "sketchup-mcp/.claude/",

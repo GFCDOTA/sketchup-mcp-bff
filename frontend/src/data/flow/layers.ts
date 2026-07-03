@@ -13,7 +13,7 @@ export const architectureLayers: Layer[] = [
   },
   {
     "name": "BFF roteador (server.py)",
-    "detail": "ThreadingHTTPServer :8782 stdlib-only. Por path decide: rota nativa do cockpit (cockpit_api.dispatch) → proxy → estático. Fallback p/ index.html em rota desconhecida (React Router). Teto de body 1 MiB (413), bind 127.0.0.1.",
+    "detail": "ThreadingHTTPServer :8782 stdlib-only. Por path decide: rota nativa do cockpit (cockpit_api.dispatch) → estático. /api|/img desconhecido → 404 JSON (nunca o index do SPA); páginas-vitrine retiradas → 410. Teto de body 1 MiB (413), bind 127.0.0.1.",
     "status": "implemented"
   },
   {
@@ -23,7 +23,7 @@ export const architectureLayers: Layer[] = [
   },
   {
     "name": "Cockpit API — dados derivados (cockpit_api.py)",
-    "detail": "/api/agents, /api/workflows, /api/decisions, /api/artifacts são DERIVADOS em tempo real do /api/state do upstream (funções _derive_*). Cache de 2s do state. Sem upstream → 502 com diagnóstico (não fabrica dados).",
+    "detail": "/api/agents, /api/workflows, /api/decisions, /api/artifacts são DERIVADOS em tempo real do state espelhado por ARQUIVO (studio_mirror.state_view, funções _derive_*). Cache de 2s do state. Motor ilegível → coleções vazias com diagnóstico no Live System Map (não fabrica dados).",
     "status": "implemented"
   },
   {
@@ -32,13 +32,13 @@ export const architectureLayers: Layer[] = [
     "status": "mock"
   },
   {
-    "name": "Proxy → upstream studio_dashboard.py (:8781)",
-    "detail": "server.py._proxy repassa /api/state, /img/**, /inbox-img/**, /api/kgraph, /api/consult/* e páginas-vitrine (/explica /grafo /fluxo ...) tal e qual ao dashboard legado. POST /api/decisions/:id/respond encaminha de fato a /api/proposal do upstream. Upstream REAL no repo engine.",
+    "name": "studio_mirror — estúdio lido por ARQUIVO (studio_mirror.py)",
+    "detail": "O antigo proxy → :8781 morreu: /api/state, /img/**, /inbox-img/**, /api/kgraph e /api/consult/* são respondidos pelo PRÓPRIO BFF lendo os arquivos do motor (studio_activity.jsonl, kitchen_angles/, .ai_bridge/**, reference.db em modo read-only). POST /api/decisions/:id/respond MOVE a proposta por arquivo (única escrita). Padrão bridge_mirror: fonte ausente → vazio/reason, nunca mock.",
     "status": "implemented"
   },
   {
     "name": "Modo MOCK (BFF_MOCK=1)",
-    "detail": "Sem upstream, /api/state é servido do snapshot real mocks/state.sample.json (header X-Bff-Source: mock). No front, VITE_MOCKS=1 usa fixtures tipadas em api/mocks.ts. Substrato de mock para dev offline.",
+    "detail": "Sem motor no disco, /api/state é servido do snapshot real mocks/state.sample.json (header X-Bff-Source: mock). No front, VITE_MOCKS=1 usa fixtures tipadas em api/mocks.ts. Substrato de mock para dev offline.",
     "status": "mock"
   },
   {

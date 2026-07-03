@@ -76,9 +76,10 @@ domínio rico que mapeia bem numa navegação de produto.
 
 O código vive em `GFCDOTA/sketchup-mcp` (repo que **não** tocamos). Portanto o frontend
 melhorado vive **aqui** (`sketchup-mcp-bff`) como um **BFF fino**: serve a UI nova na
-`:8782` e faz **proxy** de `/api/*` (e imagens/páginas) para o `studio_dashboard.py`
-rodando como upstream em `:8781`. Dados reais; domínio preservado; zero build.
+`:8782` e responde `/api/*` (e imagens) **lendo os arquivos do motor por conta própria**
+(`studio_mirror.py`). *(Histórico: a primeira versão fazia proxy pro `studio_dashboard.py`
+em `:8781`; o proxy foi aposentado — `:8781` não é mais dependência.)*
 
 ```
-browser ──▶ :8782 (sketchup-mcp-bff: server.py + web/)  ──proxy /api/*──▶  :8781 (studio_dashboard.py)
+browser ──▶ :8782 (sketchup-mcp-bff: server.py + cockpit_api + studio_mirror) ──lê ARQUIVOS──▶ repo sketchup-mcp
 ```

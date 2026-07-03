@@ -105,7 +105,7 @@ export function AgentStage({
         <p className="mb-2 text-[11px] text-muted-foreground/60">
           Online = o modelo do agente está vivo no Ollama. A conversa abaixo é uma{" "}
           <b className="text-warn/90">demonstração do fluxo</b> (roteiro) — a conversa REAL entra quando o ciclo do
-          motor (upstream :8781) estiver rodando.
+          motor estiver rodando (o feed é lido do studio_activity.jsonl, por arquivo).
         </p>
 
         {/* palco — bonequinhos posicionados, andam quando falam */}

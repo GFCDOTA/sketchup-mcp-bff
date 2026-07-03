@@ -46,7 +46,7 @@ export function FlowHero({ onSeeFlow }: { onSeeFlow: () => void }) {
         </p>
 
         <div className="mt-5 flex flex-wrap items-center gap-2">
-          <Chip on={data?.upstream.ok} label={`upstream :8781 ${data?.upstream.ok ? "ok" : "off"}`} />
+          <Chip on={data?.upstream.ok} label={`motor (arquivo) ${data?.upstream.ok ? "ok" : "off"}`} />
           <Chip on={data?.ollama.ok} label={`ollama :11434 ${data?.ollama.ok ? `${data.ollama.models} modelos` : "off"}`} />
           <Chip on label="cockpit :8782" />
         </div>

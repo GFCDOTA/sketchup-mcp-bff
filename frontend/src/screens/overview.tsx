@@ -157,7 +157,7 @@ export default function Overview() {
             <Card>
               <CardHeader><CardTitle className="flex items-center gap-2"><Network className="size-4 text-muted-foreground" /> Sistema</CardTitle></CardHeader>
               <CardContent className="space-y-2.5">
-                <Row label="Upstream (dados)" ok={status.data?.upstream.ok} detail={status.data?.upstream.ok ? "online" : "offline"} />
+                <Row label="Motor (arquivo)" ok={status.data?.upstream.ok} detail={status.data?.upstream.ok ? "legível" : "inacessível"} />
                 <Row label="Ollama (modelos)" ok={ollamaOk} detail={ollamaOk ? `${status.data!.ollama.models} modelos` : "offline"} />
                 <Row label="Agentes" ok={online > 0} detail={`${online} online`} />
               </CardContent>

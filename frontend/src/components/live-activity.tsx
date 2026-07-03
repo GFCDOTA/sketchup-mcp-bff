@@ -81,7 +81,7 @@ export function LiveActivity({
         <Info className="mt-0.5 size-3.5 shrink-0 text-blue" />
         <span>
           Não é a geração do SketchUp — é o <b className="text-foreground/80">próprio cockpit se mantendo vivo</b>:
-          a tela busca status/agentes/runs a cada poucos segundos e o BFF fala com o upstream e o Ollama.
+          a tela busca status/agentes/runs a cada poucos segundos e o BFF lê os arquivos do motor e fala com o Ollama.
           Cada linha é uma chamada e <b className="text-foreground/80">quem a fez</b>. <span className="text-blue">o que é isto? →</span>
         </span>
       </Link>

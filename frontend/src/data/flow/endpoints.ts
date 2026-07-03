@@ -4,8 +4,8 @@ export const endpointDocs: EndpointDoc[] = [
   {
     "method": "GET",
     "path": "/api/status",
-    "summary": "Saúde do cockpit: ok/url do upstream e do Ollama + contagem de modelos",
-    "dataSource": "_status(): _upstream_state() (:8781) + _ollama_get('/api/tags') (:11434)",
+    "summary": "Saúde do cockpit: motor legível por ARQUIVO (ENGINE_ROOT) + Ollama + contagem de modelos",
+    "dataSource": "_status(): fa.ENGINE_ROOT acessível (studio_mirror lê arquivos) + _ollama_get('/api/tags') (:11434)",
     "status": "implemented"
   },
   {
@@ -89,7 +89,7 @@ export const endpointDocs: EndpointDoc[] = [
     "method": "POST",
     "path": "/api/decisions/{id}/respond",
     "summary": "Responde uma decisão pendente; valida id contra as decisões reais (404 se desconhecida)",
-    "dataSource": "_decide(): para proposta de programa faz POST REAL ao upstream /api/proposal (:8781) (approve/reject); 'visual-review' é só reconhecido, não encaminhado",
+    "dataSource": "_decide(): para proposta de programa MOVE o arquivo .ai_bridge/proposals/pending→approved|rejected (studio_mirror.decide_proposal — única escrita no motor; mount :ro degrada 503); 'visual-review' é só reconhecido, não encaminhado",
     "status": "implemented"
   }
 ];

@@ -8,12 +8,15 @@ mobília/renderiza ambientes. Um app só, numa porta só: `http://localhost:8782
 browser ──▶ :8782  (BFF: serve frontend/dist + /api/* do cockpit)
                  ├── Ollama :11434          (modelos locais — models, chat)
                  ├── runner                 (runs + logs ao vivo via SSE)
-                 └── proxy /api/state /img  ──▶ :8781 (studio_dashboard.py — dados legados)
+                 └── ARQUIVOS do motor      (studio_mirror lê o repo sketchup-mcp direto —
+                                             /api/state, /api/kgraph, /api/consult/*, /img/*)
 ```
 
 > **Arquitetura:** o frontend fala **só** com `/api/*`. Quem conversa com modelos locais,
-> com o dashboard legado e com o runner de agents é o **BFF** ([`cockpit_api.py`](cockpit_api.py))
-> — nunca o React. O código do estúdio vive em `GFCDOTA/sketchup-mcp` (não é tocado aqui).
+> lê os arquivos do motor e roda o runner de agents é o **BFF** ([`cockpit_api.py`](cockpit_api.py))
+> — nunca o React. **`:8781` não é mais dependência**: todo dado do estúdio é respondido pelo
+> próprio BFF lendo o repo do motor por ARQUIVO ([`studio_mirror.py`](studio_mirror.py), padrão
+> `bridge_mirror`). O código do estúdio vive em `GFCDOTA/sketchup-mcp` (não é tocado aqui).
 
 ## Como rodar
 
@@ -30,29 +33,19 @@ docker compose down               # parar
 ```
 
 O **bff** (`:8782`) serve o frontend React + `/api/*`, fala com o **Ollama do host**
-(`:11434`) e proxia `/api/state` + imagens para o dashboard do motor em **`:8781`**. O repo
-do motor entra montado **read-only** em `/repos/sketchup-mcp` só para o **Live System Map**
-ler a árvore real — o bff **nunca escreve no motor**.
-
-Para dados **ao vivo**, tenha o `studio_dashboard.py` do motor rodando no host em `:8781`
-(o launcher `SUBIR-NOC` já faz isso). Sem nenhum upstream, rode em mock:
+(`:11434`) e responde `/api/state` + imagens **lendo o repo do motor** montado **read-only**
+em `/repos/sketchup-mcp` (studio_mirror + Live System Map). Não há mais serviço `upstream`
+nem `BFF_UPSTREAM` — dados ao vivo = motor montado; sem motor, rode em mock:
 
 ```bash
 docker build -t interior-studio-bff .                          # builda a imagem primeiro
 docker run --rm -p 8782:8782 -e BFF_MOCK=1 interior-studio-bff # cockpit standalone (snapshot)
 ```
 
-Quer **tudo** em container (inclui o dashboard do motor na `:8781`)? Use o profile `full`:
+> ⚠️ Com o mount `:ro`, a **única escrita** do cockpit no motor (aprovar/rejeitar proposta)
+> degrada com `503` honesto — no host ela funciona (move o JSON em `.ai_bridge/proposals/`).
 
-```bash
-docker compose --profile full up -d --build
-```
-
-> ⚠️ O profile `full` **escreve** estado de runtime no repo do motor (`.ai_bridge/kanban.json`,
-> inbox, cycles…) — como a dashboard nativa faz. Para manter o motor intocado, não use o
-> profile (deixe o dashboard nativo no host, ou rode em `BFF_MOCK=1`).
-
-Topologia, profiles e troubleshooting em [`docs/DOCKER.md`](docs/DOCKER.md).
+Topologia e troubleshooting em [`docs/DOCKER.md`](docs/DOCKER.md).
 
 ### Manual (sem Docker)
 
@@ -62,13 +55,14 @@ Pré-requisitos: **Python 3.10+** (BFF, stdlib) e **Node 18+** (build do React).
 # 1) build do React (uma vez; gera frontend/dist)
 cd frontend && npm install && npm run build && cd ..
 
-# 2) upstream — fonte de dados legados (porta 8781 é obrigatória)
-python /caminho/para/sketchup-mcp/tools/studio_dashboard.py --port 8781
-
-# 3) BFF — serve o cockpit + API na 8782
+# 2) BFF — serve o cockpit + API na 8782 (lê o motor por ARQUIVO; sem :8781)
 python server.py
 # -> http://127.0.0.1:8782/
 ```
+
+> O BFF acha o motor pelo `BFF_ENGINE_ROOT` (default: pasta irmã `../sketchup-mcp`).
+> Rodando de uma worktree, exporte `BFF_ENGINE_ROOT` explicitamente — senão todos os
+> painéis do estúdio degradam pra vazio (honesto, mas inútil).
 
 Desenvolvimento do frontend (HMR, opcional): `cd frontend && npm run dev` (`:5173`, faz
 proxy de `/api` pro BFF). Ver [`frontend/README.md`](frontend/README.md).
@@ -79,19 +73,27 @@ proxy de `/api` pro BFF). Ver [`frontend/README.md`](frontend/README.md).
 |---|---|---|
 | `BFF_HOST` | `127.0.0.1` | bind (localhost por padrão — não expõe na LAN) |
 | `BFF_PORT` | `8782` | porta do BFF |
-| `BFF_UPSTREAM` | `http://127.0.0.1:8781` | dashboard legado (proxy de `/api/state` + imagens) |
 | `BFF_OLLAMA` | `http://127.0.0.1:11434` | Ollama (modelos locais) |
 | `BFF_WEB` | `./frontend/dist` | diretório do build React servido |
-| `BFF_MOCK` | *(off)* | `1` serve `mocks/state.sample.json` em `/api/state` sem upstream |
-| `BFF_ENGINE_ROOT` | `../sketchup-mcp` | repo do motor que o Live System Map escaneia (read-only) |
+| `BFF_MOCK` | *(off)* | `1` serve `mocks/state.sample.json` em `/api/state` (sem motor) |
+| `BFF_ENGINE_ROOT` | `../sketchup-mcp` | **repo do motor que o studio_mirror LÊ** (fonte de /api/state, imagens, kgraph, consult) + Live System Map |
 | `BFF_SCAN_ROOT` | *(dir do módulo)* | repo do BFF a escanear (separa "o que roda" de "o que se mapeia") |
 | `BFF_MARKS_FILE` | `./.file_map_marks.json` | onde persistir marks manuais (protected/legacy/stale) do mapa |
+
+### O que ainda é vivo (fora arquivo)
+
+- **Ollama `:11434`** — status/chat dos modelos locais (sob demanda; off ⇒ agentes `online=false`, honesto).
+- **A ÚNICA escrita no motor** = mover proposta `pending → approved|rejected` quando você decide
+  no painel Decisões (`.ai_bridge/proposals/`). Com o motor montado read-only (Docker), degrada `503`.
+- Ações LLM do dashboard legado (`propose`/`audit` de proposta) **não existem** no cockpit —
+  sem arquivo-fonte, sem fabricação (o React nunca as chamou).
 
 ## Estrutura
 
 ```
-server.py            BFF: serve frontend/dist + dispatch do cockpit_api + proxy  (stdlib)
+server.py            BFF: serve frontend/dist + dispatch do cockpit_api  (stdlib, sem proxy)
 cockpit_api.py       endpoints AI (status, models/Ollama, agents, runs+SSE, decisions, workflows)
+studio_mirror.py     estúdio por ARQUIVO: /api/state, kgraph, consult, /img — lê o repo do motor
 frontend/            app React (Vite + TS + Tailwind + Radix + TanStack Query)
   src/api/           contrato tipado + mocks + client + hooks (Query/SSE)
   src/components/    design system (ui/) + shell (sidebar/topbar/command palette)

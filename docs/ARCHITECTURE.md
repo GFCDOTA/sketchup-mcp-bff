@@ -3,38 +3,42 @@
 ## Visão geral
 
 O cockpit é um **frontend React (build estático) + BFF**. A regra de negócio do estúdio
-continua no `studio_dashboard.py` do repo `sketchup-mcp` (upstream); o BFF é a borda que
-serve o app React (`frontend/dist`), expõe os endpoints do cockpit (`cockpit_api.py`),
-integra o Ollama e repassa o `/api/state` legado. Detalhes do frontend em
+continua no repo `sketchup-mcp` (motor); o BFF é a borda que serve o app React
+(`frontend/dist`), expõe os endpoints do cockpit (`cockpit_api.py`), integra o Ollama e
+monta o `/api/state` **lendo os arquivos do motor** (`studio_mirror.py`, padrão
+`bridge_mirror`) — **`:8781` não é mais dependência**. Detalhes do frontend em
 [`../frontend/README.md`](../frontend/README.md).
 
 ```
-┌──────────┐   GET /                  ┌──────────────────────────────┐   proxy /api/state   ┌────────────────────┐
-│ browser  │ ───────────────────────▶ │  BFF (server.py)             │ ───────────────────▶ │ studio_dashboard.py │
-│ :8782    │ ◀──── frontend/dist ────  │  + cockpit_api + Ollama      │ ◀──── JSON / PNG ──── │ upstream :8781      │
-└──────────┘   GET /api/*             └──────────────────────────────┘                       └────────────────────┘
+┌──────────┐   GET /                  ┌──────────────────────────────┐   lê ARQUIVOS (ro)   ┌─────────────────────┐
+│ browser  │ ───────────────────────▶ │  BFF (server.py)             │ ───────────────────▶ │ sketchup-mcp (repo) │
+│ :8782    │ ◀──── frontend/dist ────  │  + cockpit_api + Ollama      │  studio_mirror /     │ .ai_bridge/ artifacts│
+└──────────┘   GET /api/*             │  + studio/bridge/noc_mirror  │  bridge/noc_mirror   │ tools/vitrine/ ...  │
+                                      └──────────────────────────────┘                      └─────────────────────┘
 ```
 
 - O browser fala com **uma só origem** (`:8782`) — sem CORS.
-- `server.py` decide, por path: **rota nativa do cockpit** (cockpit_api) → **proxy** → **estático**.
-- O upstream é a fonte de verdade dos **dados legados** (`/api/state`); os demais endpoints derivam dele.
+- `server.py` decide, por path: **rota nativa do cockpit** (cockpit_api) → **estático**.
+- A fonte de verdade dos dados do estúdio são os **arquivos do motor** (`fa.ENGINE_ROOT`);
+  o `/api/state` é reconstruído deles e os demais endpoints derivam dele.
 
 ## Roteamento do `server.py`
 
 | Path | Ação |
 |---|---|
 | `/api/status`, `/api/models`, `/api/agents`, `/api/runs*`, `/api/decisions*`, `/api/workflows*`, `/api/artifacts` | **cockpit_api** (nativo) |
-| `/api/state`, `/img/**`, `/inbox-img/**`, páginas legadas | **proxy** → upstream |
+| `/api/state`, `/api/kgraph`, `/api/consult/*`, `/img/**`, `/inbox-img/**` | **nativo (studio_mirror — leitura de arquivo)** |
+| páginas-vitrine legadas (`/explica`, `/grafo`, …) | **410 Gone** (absorvidas na página única) |
+| `/api/**`, `/img/**` não tratados | **404 JSON** (nunca o index do SPA) |
 | `/`, `/assets/**`, `/favicon.svg` | **estático** de `frontend/dist` |
 | rota desconhecida (sem extensão) | **estático** `index.html` (fallback do React Router) |
 
 O frontend usa **React Router** (BrowserRouter). O `server.py` faz fallback para `index.html`
-em rotas desconhecidas, então deep-links (`/docs`, `/runs/:id`) e refresh funcionam. As páginas
-legadas da "vitrine" (`/explica`, `/grafo`, …) continuam sendo **proxiadas** para o upstream
-caso alguém as acesse, mas o cockpit React não navega mais para elas.
+em rotas desconhecidas, então deep-links (`/docs`, `/runs/:id`) e refresh funcionam.
 
-Resiliência: se o upstream estiver fora do ar, `/api/*` responde `502` com um JSON de
-diagnóstico (sem fabricar dados). Com `BFF_MOCK=1`, `/api/state` é servido do snapshot.
+Resiliência: se os arquivos do motor estiverem ausentes/ilegíveis, cada painel degrada
+**honesto** (coleção vazia ou `{live:false, reason}` — sem fabricar dados) e o Live System
+Map aponta o ENGINE_ROOT como problema. Com `BFF_MOCK=1`, `/api/state` é servido do snapshot.
 
 ## Frontend (React)
 
@@ -65,18 +69,19 @@ Chaves consumidas pelas views:
 
 | endpoint | origem dos dados |
 |---|---|
-| `GET /api/status` | saúde do upstream + Ollama |
+| `GET /api/status` | motor legível por arquivo (ENGINE_ROOT) + Ollama |
 | `GET /api/models` · `POST /api/models/chat` | Ollama (`:11434`) |
-| `GET /api/agents` · `/api/workflows` · `/api/decisions` · `/api/artifacts` | derivados do `/api/state` |
+| `GET /api/state` · `/api/kgraph` · `/api/consult/*` · `/img/**` · `/inbox-img/**` | **studio_mirror** (arquivos do motor) |
+| `GET /api/agents` · `/api/workflows` · `/api/decisions` · `/api/artifacts` | derivados do state espelhado |
 | `GET /api/runs` · `/api/runs/:id` · `/api/runs/:id/logs` (SSE) | registry de runs (runner **stub**) |
 | `POST /api/agents/:id/run` · `/api/workflows/:id/run` | cria um run |
-| `POST /api/decisions/:id/respond` | proxy → upstream `/api/proposal` |
+| `POST /api/decisions/:id/respond` | move a proposta por ARQUIVO (`.ai_bridge/proposals/pending→approved\|rejected`) — única escrita; mount `:ro` ⇒ `503` |
 
 Endurecimentos (review): bind `127.0.0.1` por padrão, teto de body 1 MiB (413), heartbeat no
 SSE, locks no registry de runs, validação de id em decisions, status de agente normalizado.
 
 ## Critérios preservados
 
-- `http://localhost:8782/` é o cockpit React, com **dados reais** (derivados + proxy).
+- `http://localhost:8782/` é o cockpit React, com **dados reais** (derivados dos arquivos do motor).
 - O **domínio** do app (Interior Studio / sketchup-mcp) é mantido — nada inventado.
 - Nenhuma mudança no repo de origem do estúdio.
