@@ -1,4 +1,4 @@
-# SUBIR-DASHBOARD.ps1 — sobe a PÁGINA ÚNICA de monitoramento e abre SÓ ela.
+﻿# SUBIR-DASHBOARD.ps1 — sobe a PÁGINA ÚNICA de monitoramento e abre SÓ ela.
 #
 # Você abre http://localhost:8782 e vê TUDO num lugar só:
 #   • Estúdio (agentes / runs / decisões / kanban)   — LIDO DE ARQUIVO (studio_mirror; o :8781 morreu)
