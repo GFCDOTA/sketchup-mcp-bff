@@ -1,14 +1,19 @@
 """cockpit_api.py — endpoints "AI Cockpit" do BFF (montados em :8782 pelo server.py).
 
 O BFF é o PONTO ÚNICO de integração: o frontend React fala só com /api/*; quem conversa
-com modelos locais (Ollama :11434), com o dashboard legado (upstream :8781) e com o
-"agent runner" é aqui. O frontend NUNCA chama Ollama direto.
+com modelos locais (Ollama :11434), com o estúdio espelhado por ARQUIVO (studio_mirror —
+o :8781 deixou de ser dependência) e com o "agent runner" é aqui. O frontend NUNCA chama
+Ollama direto.
 
 Endpoints:
-    GET  /api/status                  saúde (upstream + ollama)
+    GET  /api/status                  saúde (motor por arquivo + ollama)
     GET  /api/models                  modelos do Ollama (/api/tags)
     POST /api/models/chat             chat com um modelo (proxy p/ Ollama /api/chat)
-    GET  /api/agents                  agentes (derivado do /api/state legado)
+    GET  /api/state                   estado do estúdio (studio_mirror — por ARQUIVO)
+    GET  /api/kgraph                  mapa de conhecimento (tools/vitrine/kgraph.json)
+    GET  /api/consult/*               consult GPT (arquivos de .ai_bridge/interior_consult)
+    GET  /img/* /inbox-img/*          imagens de render/inbox (bytes do disco, com guard)
+    GET  /api/agents                  agentes (derivado do state espelhado)
     POST /api/agents/<id>/run         dispara um run do agente (runner stub)
     GET  /api/runs                     histórico de runs
     GET  /api/runs/<id>                detalhe (steps, inputs/outputs, artifacts)
@@ -31,16 +36,20 @@ import re
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import file_activity as fa  # Live System Map — eventos de atividade + scanner dos repos
 import noc_mirror as noc  # NOC mirror — le os arquivos planos do atuador (vidro read-only)
 import bridge_mirror as bridge  # ORACULO/:8765 mirror — audit/sessoes/git/skp por arquivo (vidro)
+import studio_mirror as studio  # ESTUDIO/:8781 mirror — o /api/state inteiro por arquivo (vidro)
 
-UPSTREAM = os.environ.get("BFF_UPSTREAM", "http://127.0.0.1:8781").rstrip("/")
 OLLAMA = os.environ.get("BFF_OLLAMA", "http://127.0.0.1:11434").rstrip("/")
 MAX_BODY = 1 << 20  # 1 MiB — teto de corpo de POST (anti-DoS)
+# modo MOCK do /api/state (migrou do proxy do server.py — o dispatch nativo o sombrearia)
+_MOCK = os.environ.get("BFF_MOCK", "") not in ("", "0", "false", "False")
+_MOCKS_DIR = Path(__file__).resolve().parent / "mocks"
 
 _LOCK = threading.Lock()
 RUNS: dict[str, dict] = {}
@@ -73,24 +82,26 @@ def _gen_id(prefix: str) -> str:
     return f"{prefix}-{int(time.time())%100000:05d}-{n:03d}"
 
 
-# ── upstream (state legado) ──────────────────────────────────────────────────
+# ── estado do estúdio (studio_mirror — por ARQUIVO; era GET :8781/api/state) ──
 _state_cache = {"t": 0.0, "v": None}
 
 
 def _upstream_state() -> dict:
+    """Mesmo nome/assinatura/cache de antes — o corpo trocou o GET :8781 pelo
+    studio_mirror.state_view() (leitura de arquivo). Os _derive_* não mudam."""
     if _state_cache["v"] is not None and time.time() - _state_cache["t"] < 2.0:
         return _state_cache["v"]
     try:
-        with urlopen(UPSTREAM + "/api/state", timeout=8) as r:
-            v = json.loads(r.read())
+        v = studio.state_view()
         if _gate("up:ok", 8.0):
-            fa.emit("upstream:/api/state", "proxy", "upstream", repo="external",
-                    endpoint="/api/state", label="read /api/state (upstream :8781)")
-    except (URLError, HTTPError, OSError, json.JSONDecodeError):
+            fa.emit("sketchup-mcp/.ai_bridge/", "read", "bff", repo="sketchup-mcp",
+                    endpoint="/api/state", label="read state (studio_mirror, por arquivo)")
+    except Exception:  # noqa: BLE001 — arquivo do motor corrompido/ausente não derruba o BFF
         v = {}
         if _gate("up:err", 6.0):
-            fa.emit("upstream:/api/state", "error", "upstream", repo="external",
-                    status="error", endpoint="/api/state", label="upstream /api/state offline")
+            fa.emit("sketchup-mcp/.ai_bridge/", "error", "bff", repo="sketchup-mcp",
+                    status="error", endpoint="/api/state",
+                    label="studio_mirror falhou ao ler o motor (ENGINE_ROOT?)")
     _state_cache.update(t=time.time(), v=v)
     return v
 
@@ -167,7 +178,7 @@ _AGENT_META = {
     "gpt-visual": ("Visão", "gpt-4o", ["vision", "judge"]),
 }
 
-# Time canônico do estúdio (líderes) — SEMPRE presente, mesmo sem o upstream legado.
+# Time canônico do estúdio (líderes) — SEMPRE presente, mesmo sem o state espelhado.
 _CANONICAL_TEAM = [
     ("interior-pm", "PM Orquestrador"),
     ("interior-orchestrator", "Team Lead"),
@@ -176,7 +187,7 @@ _CANONICAL_TEAM = [
 
 
 def _canonical_agents() -> list[dict]:
-    """Fallback quando o upstream :8781 não dá agentes: mostra o time canônico com
+    """Fallback quando o state espelhado não dá agentes: mostra o time canônico com
     status REAL — cada agente fica 'online' se o modelo dele estiver vivo no Ollama."""
     tags = _ollama_get("/api/tags", timeout=2.0) or {}
     full = {m.get("name", "") for m in tags.get("models", []) or []}
@@ -215,7 +226,7 @@ def _derive_agents(state: dict) -> list[dict]:
                         "umbrella": u.get("label", ""), "status": st, "model": model,
                         "online": bool(card.get("online")), "tools": tools,
                         "message": None if card.get("message") in (None, "—") else card.get("message")})
-    # sem upstream (ou upstream sem agentes) → time canônico com status real do Ollama
+    # sem state espelhado (ou sem agentes nele) → time canônico com status real do Ollama
     return out or _canonical_agents()
 
 
@@ -266,7 +277,9 @@ def _derive_decisions(state: dict) -> list[dict]:
         fa.emit("sketchup-mcp-bff/cockpit_api.py", "execute", "bff", endpoint="/api/decisions",
                 label="derive decisions (propostas + visual review)")
     for p in (state.get("proposals", {}) or {}).get("pending", []) or []:
-        items = ", ".join(i.get("asset", "") for i in (p.get("items") or [])[:4])
+        # items reais podem ser dicts ({asset:...}) OU strings (gaps do Auditor)
+        items = ", ".join(i.get("asset", "") if isinstance(i, dict) else str(i)
+                          for i in (p.get("items") or [])[:4])
         out.append({"id": p.get("id"), "type": "program_proposal",
                     "title": f"Programa · {p.get('room_name', p.get('room_id', ''))}",
                     "question": f"Aprovar o programa proposto ({items})?",
@@ -307,9 +320,10 @@ def _derive_artifacts(state: dict) -> list[dict]:
 
 
 def _status() -> dict:
-    st = _upstream_state()
+    # `upstream` mantido no SHAPE (types.ts intocado); semântica nova = "motor legível
+    # por ARQUIVO" (ENGINE_ROOT acessível), não mais "GET :8781 respondeu".
     oll = _ollama_get("/api/tags", timeout=2.0)
-    return {"upstream": {"ok": bool(st), "url": UPSTREAM},
+    return {"upstream": {"ok": fa.ENGINE_ROOT.is_dir(), "url": str(fa.ENGINE_ROOT)},
             "ollama": {"ok": oll is not None, "url": OLLAMA,
                        "models": len((oll or {}).get("models", []))},
             "time": _now()}
@@ -320,7 +334,7 @@ def _seed_runs():
     global _SEEDED
     if _SEEDED:
         return
-    state = _upstream_state()   # rede FORA do lock
+    state = _upstream_state()   # I/O de arquivo FORA do lock
     claims = (state.get("sessions", {}) or {}).get("claims", []) or []
     with _LOCK:                 # double-checked locking — semeia uma vez só
         if _SEEDED:
@@ -429,6 +443,38 @@ def dispatch(h) -> bool:
 
     if method == "GET" and path == "/api/status":
         return _ok(h, _status())
+    # ESTÚDIO por arquivo (studio_mirror) — rotas que antes eram PROXY pro :8781
+    if method == "GET" and path == "/api/state":
+        if _MOCK:
+            fp = _MOCKS_DIR / "state.sample.json"
+            if fp.is_file():
+                if _gate("mock:state", 5.0):
+                    fa.emit("sketchup-mcp-bff/mocks/state.sample.json", "read", "bff",
+                            endpoint="/api/state", label="/api/state servido do MOCK",
+                            confidence="medium", mock=True)
+                h._send(200, fp.read_bytes(), "application/json; charset=utf-8",
+                        {"X-Bff-Source": "mock"})
+                return True
+        return _ok(h, _upstream_state())
+    if method == "GET" and path == "/api/kgraph":
+        return _ok(h, studio.kgraph_view())
+    if method == "GET" and path == "/api/consult/state":
+        return _ok(h, studio.consult_view())
+    if method == "GET" and path == "/api/consult/latest-question":
+        return _ok(h, studio.consult_latest("question"))
+    if method == "GET" and path == "/api/consult/latest-answer":
+        return _ok(h, studio.consult_latest("answer"))
+    if method == "GET" and path.startswith(("/img/", "/inbox-img/")):
+        from urllib.parse import unquote
+        if path.startswith("/img/"):
+            img = studio.render_image(unquote(path[len("/img/"):]))
+        else:
+            img = studio.inbox_image(unquote(path[len("/inbox-img/"):]))
+        if img is None:
+            return _ok(h, {"error": "not_found"}, 404)
+        body, ctype = img
+        h._send(200, body, ctype)
+        return True
     if method == "GET" and path == "/api/models":
         return _ok(h, _ollama_models())
     if method == "POST" and path == "/api/models/chat":
@@ -528,19 +574,22 @@ def _decide(h, did: str, body: dict) -> bool:
     if did not in pending:
         return _ok(h, {"ok": False, "error": "unknown_decision", "id": did}, 404)
     applied = None
-    # decisão de programa → ação real no upstream (/api/proposal); reflete o resultado
+    # decisão de programa → ÚNICA escrita no motor: mover a proposta por ARQUIVO
+    # (.ai_bridge/proposals/pending → approved|rejected), espelho de proposals._move.
     if did != "visual-review":
         action = "approve" if str(choice).lower().startswith("aprov") else \
                  "reject" if str(choice).lower().startswith("rejeit") else None
         if action:
             try:
-                payload = json.dumps({"action": action, "id": did}).encode()
-                req = Request(UPSTREAM + "/api/proposal", data=payload,
-                              headers={"Content-Type": "application/json"}, method="POST")
-                with urlopen(req, timeout=8) as r:
-                    applied = json.loads(r.read())
-            except (URLError, HTTPError, OSError, json.JSONDecodeError) as e:
-                return _ok(h, {"ok": False, "error": "upstream_failed", "detail": str(e)}, 502)
+                moved = studio.decide_proposal(did, action)
+            except OSError as e:   # inclui PermissionError — motor montado read-only (Docker)
+                return _ok(h, {"ok": False, "error": "decision_write_unavailable",
+                               "hint": "motor montado read-only — aprove pelo repo do motor",
+                               "detail": str(e)}, 503)
+            if moved is None:
+                return _ok(h, {"ok": False, "error": "unknown_proposal", "id": did}, 404)
+            applied = {"ok": True, "proposal": moved}   # shape do antigo /api/proposal do :8781
+            _state_cache.update(t=0.0, v=None)          # próximo /api/state já reflete o move
     return _ok(h, {"ok": True, "id": did, "choice": choice, "upstream": applied})
 
 
@@ -653,5 +702,7 @@ def _runs_logs(h, rid: str, query: dict) -> bool:
     return True
 
 
-# Liga o painel "o que está errado?" do Live System Map à saúde upstream/ollama.
+# Liga o painel "o que está errado?" do Live System Map à saúde motor(arquivo)/ollama.
 fa.set_status_probe(_status)
+# O studio_mirror pergunta o status do Ollama por AQUI (probe injetado — sem import circular).
+studio.set_ollama_probe(_ollama_get)

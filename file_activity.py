@@ -514,7 +514,7 @@ def health() -> dict:
 
 
 def set_status_probe(probe) -> None:
-    """O cockpit_api injeta sua função de status (upstream/ollama) para os problemas."""
+    """O cockpit_api injeta sua função de status (motor-por-arquivo/ollama) para os problemas."""
     global _status_probe
     _status_probe = probe
 
@@ -532,10 +532,11 @@ def _problems(views: list) -> list:
     if st:
         if not st.get("upstream", {}).get("ok"):
             out.append({"id": "upstream-offline", "severity": "error", "kind": "upstream_offline",
-                        "title": "Upstream legado offline",
-                        "detail": f"{st.get('upstream', {}).get('url')} não respondeu — telas que "
-                                  "dependem de /api/state caem em vazio ou mock.",
-                        "path": "sketchup-mcp/tools/studio_dashboard.py"})
+                        "title": "Motor (arquivo) inacessível",
+                        "detail": f"ENGINE_ROOT {st.get('upstream', {}).get('url')} não existe — "
+                                  "o studio_mirror não tem o que ler e /api/state cai em vazio. "
+                                  "Confira BFF_ENGINE_ROOT.",
+                        "path": "sketchup-mcp-bff/studio_mirror.py"})
         if not st.get("ollama", {}).get("ok"):
             out.append({"id": "ollama-offline", "severity": "warn", "kind": "ollama_offline",
                         "title": "Ollama offline",
