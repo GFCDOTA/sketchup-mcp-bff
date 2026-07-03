@@ -1,17 +1,17 @@
-# INTERIOR STUDIO — AI Cockpit BFF no Docker (assim como o sketchup-mcp dockeriza a
-# sua dashboard): UM serviço principal (o bff), reiniciando sozinho.
+# INTERIOR STUDIO — AI Cockpit BFF no Docker: UM serviço só (o bff), reiniciando sozinho.
 #
 #   docker compose up -d --build            # sobe só o bff(:8782)
 #   abrir  http://localhost:8782/
 #
 #   browser → :8782  bff (frontend/dist + /api/* do cockpit)
-#        ├── proxy /api/state /img/*  → host.docker.internal:8781  (studio_dashboard NATIVO do motor)
+#        ├── /api/* e /img/*  → respondidos pelo PRÓPRIO bff lendo /repos/sketchup-mcp (:ro)
+#        │                      (studio_mirror — o :8781 NÃO é mais dependência)
 #        ├── /api/models /api/models/chat → host.docker.internal:11434  (Ollama do HOST)
 #        └── Live System Map scanner  → /repos/sketchup-mcp  (motor montado READ-ONLY)
 #
-# Para dados ao vivo: deixe o studio_dashboard.py do motor rodando no host em :8781
-# (o launcher SUBIR-NOC já faz isso), OU containerize-o também com:  --profile full
-# (ver abaixo). Sem nenhum upstream, use BFF_MOCK=1 para o snapshot capturado.
+# Decisões (aprovar/rejeitar proposta) são a ÚNICA escrita no motor — com o mount :ro
+# elas degradam 503 honesto no container (no host funcionam). Sem motor montado, use
+# BFF_MOCK=1 para o snapshot capturado.
 services:
   # BFF + frontend React (:8782) — o cockpit que o humano abre. Único serviço default.
   bff:
@@ -25,39 +25,13 @@ services:
       - "8782:8782"
     environment:
       BFF_HOST: "0.0.0.0"
-      BFF_MOCK: "${BFF_MOCK:-0}"                         # 1 = serve mocks/, ignora upstream
-      BFF_UPSTREAM: "${BFF_UPSTREAM:-http://host.docker.internal:8781}"  # dashboard do motor (host OU profile full)
+      BFF_MOCK: "${BFF_MOCK:-0}"                         # 1 = serve mocks/state.sample.json
       BFF_OLLAMA: "http://host.docker.internal:11434"    # Ollama do HOST
-      BFF_ENGINE_ROOT: "/repos/sketchup-mcp"             # Live System Map enxerga o motor
+      BFF_ENGINE_ROOT: "/repos/sketchup-mcp"             # studio_mirror + Live System Map leem daqui
     volumes:
-      # motor READ-ONLY — o scanner lê a árvore real do repo; o bff NUNCA escreve no motor
+      # motor READ-ONLY — studio_mirror/scanner leem a árvore real do repo; a única
+      # escrita possível (decisão de proposta) degrada 503 honesto com :ro.
       - ../sketchup-mcp:/repos/sketchup-mcp:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    restart: unless-stopped
-
-  # OPT-IN (`docker compose --profile full up -d --build`): containeriza também o
-  # dashboard legado do motor na :8781, reusando o Dockerfile dele SEM tocar o repo.
-  # ⚠️ ESTE serviço ESCREVE estado de runtime no repo do motor (.ai_bridge/kanban.json,
-  # inbox, cycles, ...) — exatamente como a dashboard NATIVA faz. Por isso o mount NÃO
-  # é read-only aqui. Se quiser o motor intocado, NÃO use este profile (deixe o
-  # dashboard nativo no host, ou rode em BFF_MOCK=1).
-  upstream:
-    profiles: ["full"]
-    build:
-      context: ../sketchup-mcp
-      dockerfile: tools/Dockerfile.dashboard
-    image: interior-studio-dashboard
-    container_name: interior-studio-upstream
-    init: true
-    command: ["python", "tools/studio_dashboard.py", "--port", "8781"]
-    working_dir: /workspace/apps/sketchup-mcp
-    volumes:
-      - ../sketchup-mcp:/workspace/apps/sketchup-mcp     # RW: a dashboard escreve aqui (kanban/inbox/cycles)
-    environment:
-      OLLAMA_HOST: "http://host.docker.internal:11434"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "8781:8781"
     restart: unless-stopped
