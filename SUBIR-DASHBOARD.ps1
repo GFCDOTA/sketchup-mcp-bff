@@ -23,7 +23,9 @@ if (-not (Test-Path "$BFF\frontend\dist\index.html")) {
 
 Write-Host "→ cockpit ÚNICO (BFF :8782 — serve o app + /api lendo o motor por ARQUIVO)…"
 $env:BFF_PORT = "8782"
-Start-Process -WindowStyle Minimized -WorkingDirectory $BFF $PY -ArgumentList "server.py"
+# Hidden (não Minimized): console clicável entra em modo-seleção (QuickEdit) e congela
+# TODO print() do server → :8782 aceita TCP mas nunca responde (aconteceu 2026-07-03).
+Start-Process -WindowStyle Hidden -WorkingDirectory $BFF $PY -ArgumentList "server.py"
 Start-Sleep -Seconds 3
 
 Start-Process "http://localhost:8782"
