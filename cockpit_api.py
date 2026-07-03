@@ -93,7 +93,13 @@ def _upstream_state() -> dict:
         return _state_cache["v"]
     try:
         v = studio.state_view()
-        if _gate("up:ok", 8.0):
+        if not fa.ENGINE_ROOT.is_dir():
+            # views degradam pra coleções vazias sem levantar — sucesso aqui seria fabricado
+            if _gate("up:err", 6.0):
+                fa.emit("sketchup-mcp/.ai_bridge/", "error", "bff", repo="sketchup-mcp",
+                        status="error", endpoint="/api/state",
+                        label="motor ilegível (ENGINE_ROOT ausente) — state degradado")
+        elif _gate("up:ok", 8.0):
             fa.emit("sketchup-mcp/.ai_bridge/", "read", "bff", repo="sketchup-mcp",
                     endpoint="/api/state", label="read state (studio_mirror, por arquivo)")
     except Exception:  # noqa: BLE001 — arquivo do motor corrompido/ausente não derruba o BFF
@@ -323,7 +329,10 @@ def _status() -> dict:
     # `upstream` mantido no SHAPE (types.ts intocado); semântica nova = "motor legível
     # por ARQUIVO" (ENGINE_ROOT acessível), não mais "GET :8781 respondeu".
     oll = _ollama_get("/api/tags", timeout=2.0)
-    return {"upstream": {"ok": fa.ENGINE_ROOT.is_dir(), "url": str(fa.ENGINE_ROOT)},
+    # ok exige o dado REALMENTE legível (state_view não-vazio, cache 2s) — dir existir com
+    # state {} deixava o badge verde com todos os painéis em branco (dado fabricado).
+    return {"upstream": {"ok": fa.ENGINE_ROOT.is_dir() and bool(_upstream_state()),
+                         "url": str(fa.ENGINE_ROOT)},
             "ollama": {"ok": oll is not None, "url": OLLAMA,
                        "models": len((oll or {}).get("models", []))},
             "time": _now()}
@@ -430,6 +439,8 @@ def dispatch(h) -> bool:
     """Tenta tratar uma rota nativa do cockpit. Retorna True se tratou."""
     from urllib.parse import urlparse, parse_qs
     method, path = h.command, urlparse(h.path).path
+    if method == "HEAD":
+        method = "GET"   # HEAD responde pelas mesmas views (h._send suprime o body)
     query = parse_qs(urlparse(h.path).query)
 
     # Live System Map: rotas /api/file-map/* (inclui o SSE) — antes de tudo.
@@ -459,7 +470,11 @@ def dispatch(h) -> bool:
     if method == "GET" and path == "/api/kgraph":
         return _ok(h, studio.kgraph_view())
     if method == "GET" and path == "/api/consult/state":
-        return _ok(h, studio.consult_view())
+        try:
+            return _ok(h, studio.consult_view())
+        except Exception as e:  # noqa: BLE001 — paridade com o :8781 (view inteira guardada)
+            return _ok(h, {"error": str(e), "pending_questions": [], "latest_question": None,
+                           "latest_answer": None})
     if method == "GET" and path == "/api/consult/latest-question":
         return _ok(h, studio.consult_latest("question"))
     if method == "GET" and path == "/api/consult/latest-answer":

@@ -294,9 +294,28 @@ def agents_view() -> dict:
 
 
 # ── 2. RENDERS (kitchen_angles/*.png) ───────────────────────────────────────────────────
+# espelha tools/reference_db.py:60/68 (THEME_WORDS/SUBELEM_WORDS — dados puros de keyword)
+THEME_WORDS = {
+    "black_wood_gold": "black_wood_gold", "blackgold": "black_wood_gold", "bwg": "black_wood_gold",
+    "dark_walnut": "dark_walnut", "walnut": "dark_walnut", "nogueira": "dark_walnut",
+    "hotel_boutique": "hotel_boutique", "boutique": "industrial_boutique",
+    "industrial": "industrial_boutique", "nero": "black_wood_gold",
+    "warm_compact": "warm_compact", "clara": "warm_compact", "fendi": "warm_compact",
+    "moody": "black_wood_gold",
+}
+SUBELEM_WORDS = {
+    "hero": "hero_render", "elevacao": "elevation", "elevation": "elevation",
+    "dollhouse": "full_room", "plano": "plan", "matriz": "montage", "montagem": "montage",
+    "ab_": "montage", "backsplash": "backsplash", "floor": "floor", "piso": "floor",
+    "variante": "variant", "golden": "hero_render", "premium": "hero_render", "stress": "variant",
+    "angle": "detail", "ang_": "detail", "3q": "hero_render", "materials": "montage",
+}
+
+
 def renders_view() -> list[dict]:
-    """Espelha studio_dashboard._renders. theme/sub degradados pra '-'/'render' = o MESMO
-    fallback que o próprio :8781 usa quando o import do reference_db falha (perda cosmética)."""
+    """Espelha studio_dashboard._renders, incluindo a inferência theme/sub de
+    reference_db._infer_from_name (o :8781 vivo dava nomes reais — '-'/'render' fixos
+    apagavam o nome de 29/45 renders na tela Artefatos)."""
     d = _angles()
     if not d.is_dir():
         return []
@@ -312,7 +331,10 @@ def renders_view() -> list[dict]:
             st = p.stat()
         except OSError:
             continue
-        out.append({"name": p.name, "theme": "-", "sub": "render",
+        low = p.name.lower()
+        theme = next((v for k, v in THEME_WORDS.items() if k in low), None)
+        sub = next((v for k, v in SUBELEM_WORDS.items() if k in low), None)
+        out.append({"name": p.name, "theme": theme or "-", "sub": sub or "render",
                     "kb": round(st.st_size / 1024), "mtime": int(st.st_mtime)})
     return out
 
@@ -415,7 +437,9 @@ def _kb_read() -> list[dict]:
     sem header vira UM bloco id=0."""
     p = _root() / ".ai_bridge/knowledge/architect.md"
     try:
-        text = p.read_text("utf-8") if p.exists() else ""
+        # errors="replace": o motor appenda ao vivo — flush no meio de char multibyte
+        # não pode derrubar a view (UnicodeDecodeError não é OSError)
+        text = p.read_text("utf-8", "replace") if p.exists() else ""
     except OSError:
         text = ""
     if not text:
@@ -445,7 +469,7 @@ def knowledge_view() -> dict:
     jr = _judge_rules()
     kb = _root() / ".ai_bridge/knowledge/architect.md"
     try:
-        chars = len(kb.read_text("utf-8")) if kb.exists() else 0
+        chars = len(kb.read_text("utf-8", "replace")) if kb.exists() else 0
     except OSError:
         chars = 0
     return {"chars": chars,
@@ -474,7 +498,7 @@ def _latest_answer() -> dict | None:
     if not p:
         return None
     try:
-        raw = p.read_text("utf-8")
+        raw = p.read_text("utf-8", "replace")
     except OSError:
         return None
     try:
@@ -666,8 +690,12 @@ def _load_pack(pack_id: str) -> dict | None:
 
 def _pack_counts(pack: dict) -> dict:
     refs = pack.get("references", [])
+    if not isinstance(refs, list):
+        refs = []
     out = {"total": len(refs), "approved": 0, "rejected": 0, "main": 0, "anti": 0, "pending": 0}
     for r in refs:
+        if not isinstance(r, dict):   # pack malformado não pode derrubar o /api/state inteiro
+            continue
         st = r.get("status", "pending")
         out[st] = out.get(st, 0) + 1
     return out

@@ -14,9 +14,9 @@ Uso:
     BFF_PORT=8782 BFF_ENGINE_ROOT=E:\\Claude\\apps\\sketchup-mcp python server.py
     BFF_MOCK=1 python server.py            # /api/state vem de mocks/ (snapshot capturado)
 
-Nota HEAD: do_HEAD não passa pelo dispatch (só estático + 404 em /api|/img) — o frontend
-usa apenas GET/POST. stdlib only — o BFF não tem dependências (o build do React é
-separado, em frontend/).
+Nota HEAD: do_HEAD roteia pelo dispatch como GET (o _send suprime o body) — HEAD /api/*
+responde 200 com headers reais, como no proxy antigo. stdlib only — o BFF não tem
+dependências (o build do React é separado, em frontend/).
 """
 from __future__ import annotations
 
@@ -40,8 +40,10 @@ _API_PREFIXES = ("/api/", "/img/", "/inbox-img/")
 # Páginas-vitrine do dashboard legado — RETIRADAS (absorvidas na página única :8782).
 VITRINE_GONE = {
     "/explica", "/grafo", "/fluxo", "/como-funciona",
-    "/agents", "/single-agent", "/multi-agent", "/vitrine",
+    "/single-agent", "/multi-agent", "/vitrine",
 }
+# "/agents" NÃO entra: é rota VIVA do SPA (App.tsx redireciona pra /operacao?tab=agentes) —
+# deep-link/F5 precisa cair no index do React, não em 410.
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
@@ -128,7 +130,10 @@ class H(BaseHTTPRequestHandler):
             self._serve_static(path)
 
     def do_HEAD(self):
-        # HEAD não passa pelo dispatch (comportamento pré-existente): só estático + 404/410.
+        # HEAD roteia pelas MESMAS views do GET (dispatch normaliza; _send suprime o body) —
+        # paridade com o proxy antigo, onde HEAD /api/* respondia 200 com headers reais.
+        if cockpit_api.dispatch(self):
+            return
         path = urlparse(self.path).path
         if not self._not_handled(path):
             self._serve_static(path)

@@ -389,5 +389,75 @@ class EmptyEngineRootTest(unittest.TestCase):
         self.assertIsNone(self.sm.decide_proposal("p1", "approve"))
 
 
+class ReviewFixRegressionTest(unittest.TestCase):
+    """Pina os fixes do review adversarial: byte inválido não derruba view (UnicodeDecodeError
+    não é OSError), renders inferem theme/sub reais, pack malformado não explode o state."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="studio_mirror_fix_"))
+        root = cls.tmp / "engine"
+        cls.root = root
+        # architect.md com header KB válido + byte 0xE9 solto (UTF-8 inválido — flush no meio
+        # de char multibyte do append ao vivo do motor)
+        kb = root / ".ai_bridge/knowledge/architect.md"
+        kb.parent.mkdir(parents=True, exist_ok=True)
+        kb.write_bytes(b"<!--KB id=1 | title=Regra viva-->\ncorpo caf\xe9 truncado\n")
+        # answer .md colado em cp1252 (0xE3 = 'ã' fora de UTF-8)
+        inbox = root / ".ai_bridge/interior_consult/inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / "20260703T000000Z_answer.md").write_bytes(b"resposta n\xe3o-utf8\n")
+        # renders com keywords reais + um sem keyword
+        ang = root / "artifacts/planta_74/furnished/kitchen_angles"
+        ang.mkdir(parents=True, exist_ok=True)
+        (ang / "black_wood_gold_hero.png").write_bytes(_PNG)
+        (ang / "sem_keyword.png").write_bytes(_PNG)
+        # pack com reference string (malformada) no meio das dicts
+        _wj(root / ".ai_bridge/reference_packs/pack_bad.json",
+            {"asset": "sofa", "references": ["string_perdida", {"status": "approved"}]})
+        os.environ["BFF_ENGINE_ROOT"] = str(root)
+        import file_activity
+        importlib.reload(file_activity)
+        import studio_mirror
+        cls.sm = importlib.reload(studio_mirror)
+
+    @classmethod
+    def tearDownClass(cls):
+        os.environ.pop("BFF_ENGINE_ROOT", None)
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+        import file_activity
+        importlib.reload(file_activity)
+        import studio_mirror
+        importlib.reload(studio_mirror)
+
+    def test_invalid_utf8_never_raises_kb_and_answer_degrade_com_replace(self):
+        entries = self.sm._kb_read()          # não pode levantar UnicodeDecodeError
+        self.assertEqual(entries[0]["id"], 1)
+        self.assertIn("caf", entries[0]["body"])
+        kv = self.sm.knowledge_view()
+        self.assertGreater(kv["chars"], 0)
+        la = self.sm._latest_answer()
+        self.assertIsNotNone(la)
+        self.assertIn("resposta", la["raw"])
+        cv = self.sm.consult_view()           # a view inteira segue respondendo
+        self.assertIn("latest_answer", cv)
+
+    def test_renders_infer_theme_and_sub_from_filename(self):
+        by_name = {r["name"]: r for r in self.sm.renders_view()}
+        hero = by_name["black_wood_gold_hero.png"]
+        self.assertEqual(hero["theme"], "black_wood_gold")
+        self.assertEqual(hero["sub"], "hero_render")
+        plain = by_name["sem_keyword.png"]
+        self.assertEqual(plain["theme"], "-")
+        self.assertEqual(plain["sub"], "render")
+
+    def test_pack_counts_skips_non_dict_references(self):
+        counts = self.sm._pack_counts({"references": ["string_perdida", {"status": "approved"}]})
+        self.assertEqual(counts["total"], 2)
+        self.assertEqual(counts["approved"], 1)
+        st = self.sm.state_view()             # pack malformado presente → não pode levantar
+        self.assertIn("refpack", st)
+
+
 if __name__ == "__main__":
     unittest.main()
