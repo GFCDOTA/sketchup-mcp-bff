@@ -1,18 +1,21 @@
 import { NavLink } from "react-router-dom";
 import { Boxes } from "lucide-react";
 import { NAV } from "@/config/nav";
-import { useRuns, useDecisions } from "@/api/hooks";
+import { useRuns, useDecisions, useCuration } from "@/api/hooks";
+import { DEFAULT_PLANT } from "@/api/client";
 import { useUi } from "@/store/ui";
 import { cn } from "@/lib/utils";
 
 export function Sidebar() {
   const { data: runs } = useRuns();
   const { data: decisions } = useDecisions();
+  const { data: curation } = useCuration(DEFAULT_PLANT);
   const setOpen = useUi((s) => s.setSidebarOpen);
 
   const badges: Record<string, number> = {
     runs: (runs?.runs ?? []).filter((r) => r.status === "running").length,
     decisions: (decisions?.decisions ?? []).filter((d) => d.status === "pending").length,
+    curation: curation?.awaiting_human ?? 0,
   };
 
   return (

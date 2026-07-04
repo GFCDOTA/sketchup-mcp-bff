@@ -10,10 +10,14 @@ import type {
   NocLedgerResponse, NocStatusResponse,
   BridgeHealth, BridgeGate, BridgeSessions, BridgeGit, BridgeSkp,
   GateAccessEvent, GateStreamSeed,
+  CurationResponse, CurationPlantsResponse, CurationVerdictRequest, CurationVerdictResponse,
 } from "./types";
 import { mocks } from "./mocks";
 
 export const USE_MOCKS = import.meta.env.VITE_MOCKS === "1";
+
+/** Planta default da curadoria — hoje só a planta_74 tem corpus julgado. */
+export const DEFAULT_PLANT = "planta_74";
 
 class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -159,6 +163,39 @@ export const api = {
       live: true, plants: [{ plant: "planta_74", skpCount: 7, latestSkp: "planta_74_furnished.skp", latestMtime: Date.now() / 1000, renders: 217 }],
     }) as BridgeSkp);
     return http("/api/bridge/skp");
+  },
+  // ── Curadoria (KICKOFF_CURADORIA): corpus julgado por ARQUIVO + clique do humano ──
+  async curation(plant: string): Promise<CurationResponse> {
+    if (USE_MOCKS) return delay().then(() => ({
+      live: true, plant, counts: { CANDIDATE: 1 }, awaiting_human: 1, themes: ["warm_compact"],
+      variants: [{
+        variant_id: `${plant}__baseline__warm_compact__L0`, created_at: "2026-07-04T05:00:14Z",
+        plant, verdict: "CANDIDATE", machine_score: { value: 0.6, label: "machine_provisional" },
+        params: { style: null, theme: "", layout_seed: 0 }, theme: "warm_compact",
+        gates: { geometry_sanity: "PASS" }, n_boxes: 200, img: null, renderer: "su-free",
+        top_level_verdict: "WARN", discriminated: false,
+        axes: { wall_fidelity: { verdict: "FAIL", evidence: "sem shell (mock)" } },
+        findings_count: 5,
+        patterns: [{ pattern: "paleta warm compacta (mock)", verdict: "works", why: "coesa" }],
+        promotion_note: null, revisions: 3, human_verdict: null,
+      }],
+      patterns: { total: 1, works: 1, fails: 0, neutral: 0, patterns: [
+        { pattern: "paleta warm compacta (mock)", works: 1, fails: 0, neutral: 0,
+          themes: ["warm_compact"], variants: [`${plant}__baseline__warm_compact__L0`], why: ["coesa"] },
+      ] },
+    }) as CurationResponse);
+    return http(`/api/curation/${encodeURIComponent(plant)}`);
+  },
+  async curationPlants(): Promise<CurationPlantsResponse> {
+    if (USE_MOCKS) return delay().then(() => ({ plants: ["planta_74"], root: "(mock)" }));
+    return http("/api/curation/plants");
+  },
+  // o CLIQUE — única origem legítima de human_verdict (rail do kickoff)
+  async respondCurationVerdict(plant: string, body: CurationVerdictRequest): Promise<CurationVerdictResponse> {
+    if (USE_MOCKS) return delay().then(() => ({ ok: true }));
+    return http(`/api/curation/${encodeURIComponent(plant)}/verdict`, {
+      method: "POST", body: JSON.stringify(body),
+    });
   },
 };
 

@@ -4,7 +4,9 @@ import {
   useMutation, useQuery, useQueryClient, type UseQueryOptions,
 } from "@tanstack/react-query";
 import { api, streamRunLogs, streamFileEvents, streamGateAccess } from "./client";
-import type { ChatRequest, LogLine, FileActivityEvent, GateAccessEvent } from "./types";
+import type {
+  ChatRequest, LogLine, FileActivityEvent, GateAccessEvent, CurationVerdictRequest,
+} from "./types";
 
 export const qk = {
   status: ["status"] as const,
@@ -24,6 +26,7 @@ export const qk = {
   bridgeSessions: ["bridge", "sessions"] as const,
   bridgeGit: ["bridge", "git"] as const,
   bridgeSkp: ["bridge", "skp"] as const,
+  curation: (plant: string) => ["curation", plant] as const,
 };
 
 type QOpts<T> = Omit<UseQueryOptions<T, Error, T>, "queryKey" | "queryFn">;
@@ -72,6 +75,19 @@ export const useBridgeGit = () =>
   useQuery({ queryKey: qk.bridgeGit, queryFn: api.bridgeGit, refetchInterval: 10000 });
 export const useBridgeSkp = () =>
   useQuery({ queryKey: qk.bridgeSkp, queryFn: api.bridgeSkp, refetchInterval: 15000 });
+
+/* ── Curadoria: corpus julgado por arquivo + o clique do Felipe ─────────────-*/
+export const useCuration = (plant: string) =>
+  useQuery({ queryKey: qk.curation(plant), queryFn: () => api.curation(plant),
+             enabled: !!plant, refetchInterval: 6000 });
+
+export function useCurationVerdict(plant: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CurationVerdictRequest) => api.respondCurationVerdict(plant, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.curation(plant) }),
+  });
+}
 
 /* ── SSE: ACESSOS ao gate AO VIVO (tail do audit.jsonl) — como o "Acontecendo agora", mas do gate ─*/
 export function useGateLive(max = 24) {
