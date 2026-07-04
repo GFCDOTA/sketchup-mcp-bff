@@ -34,11 +34,12 @@ _SEG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]*$")
 # ── paths (dinâmicos p/ honrar env em teste, padrão noc_mirror) ─────────────────────────
 def _sweep_root() -> Path:
     """Raiz dos runs do sweep — nível WORKSPACE (E:\\Claude\\data\\runs\\...), não o
-    repo do motor: `fa.ENGINE_ROOT.parent` (precedente: bridge_mirror workspace scan)."""
+    repo do motor. ENGINE_ROOT = <workspace>/apps/sketchup-mcp → workspace é
+    `.parent.parent` (mesma âncora do bridge_mirror.git_view)."""
     env = os.environ.get("BFF_SWEEP_ROOT", "")
     if env:
         return Path(env)
-    return fa.ENGINE_ROOT.parent / "data" / "runs" / "noc_variant_sweep"
+    return fa.ENGINE_ROOT.parent.parent / "data" / "runs" / "noc_variant_sweep"
 
 
 def _plant_dir(plant: str) -> Path:
