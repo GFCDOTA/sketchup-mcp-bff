@@ -42,6 +42,8 @@ export interface ModelInfo {
   parameterSize?: string;
   quantization?: string;
   modifiedAt?: IsoString;
+  /** false = modelo de embedding (vetoriza pro RAG) — /api/chat do Ollama dá 400 nele. */
+  chat?: boolean;
 }
 
 /** GET /api/models — lista de modelos; `source` indica origem da listagem. */

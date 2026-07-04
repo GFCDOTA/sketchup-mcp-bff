@@ -128,6 +128,14 @@ def _ollama_get(path: str, timeout: float = 4.0):
         return None
 
 
+def _is_embedding_model(name: str, family: str) -> bool:
+    """Modelo de EMBEDDING (ex. nomic-embed-text, família bert) vetoriza texto pro
+    RAG — o /api/chat do Ollama devolve HTTP 400 pra ele. Detectar aqui evita o
+    erro seco na tela de modelos (bug real: Felipe clicou e levou 'ollama HTTP 400')."""
+    n, f = (name or "").lower(), (family or "").lower()
+    return "embed" in n or "bert" in f
+
+
 def _ollama_models() -> dict:
     data = _ollama_get("/api/tags")
     if data is None:
@@ -136,10 +144,12 @@ def _ollama_models() -> dict:
     out = []
     for m in data.get("models", []):
         det = m.get("details", {}) or {}
-        out.append({"name": m.get("name"), "family": det.get("family"),
+        name, family = m.get("name"), det.get("family")
+        out.append({"name": name, "family": family,
                     "sizeBytes": m.get("size"), "parameterSize": det.get("parameter_size"),
                     "quantization": det.get("quantization_level"),
-                    "modifiedAt": m.get("modified_at")})
+                    "modifiedAt": m.get("modified_at"),
+                    "chat": not _is_embedding_model(name, family)})
     return {"ok": True, "source": "ollama", "models": out}
 
 
@@ -150,6 +160,11 @@ def _ollama_chat(body: dict) -> tuple[int, dict]:
         return 400, {"ok": False, "error": "model (string) obrigatório"}
     if not isinstance(messages, list) or not messages:
         return 400, {"ok": False, "error": "messages (lista) obrigatório"}
+    if _is_embedding_model(model, ""):
+        return 400, {"ok": False, "error": "modelo de embedding não conversa",
+                     "hint": f"{model} vetoriza texto pro RAG (project_memory_db) — "
+                             "não suporta chat. Escolha um modelo de geração "
+                             "(qwen2.5-coder, llama3.1, deepseek-r1…)."}
     payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
     req = Request(OLLAMA + "/api/chat", data=payload,
                   headers={"Content-Type": "application/json"}, method="POST")
@@ -162,7 +177,15 @@ def _ollama_chat(body: dict) -> tuple[int, dict]:
     except HTTPError as e:
         fa.emit("ollama:/api/chat", "error", "ollama", repo="external", status="error",
                 endpoint="/api/chat", label=f"chat {model} HTTP {e.code}")
-        return e.code, {"ok": False, "error": f"ollama HTTP {e.code}"}
+        # repassa o MOTIVO do Ollama (ex. "does not support chat") — "HTTP 400"
+        # seco não diz nada pra quem está na tela.
+        detail = ""
+        try:
+            detail = (json.loads(e.read()) or {}).get("error", "")
+        except (OSError, ValueError):
+            pass
+        return e.code, {"ok": False, "error": f"ollama HTTP {e.code}",
+                        **({"detail": detail} if detail else {})}
     except (URLError, OSError) as e:
         fa.emit("ollama:/api/chat", "error", "ollama", repo="external", status="error",
                 endpoint="/api/chat", label=f"chat {model} indisponível")
