@@ -44,6 +44,7 @@ import file_activity as fa  # Live System Map — eventos de atividade + scanner
 import noc_mirror as noc  # NOC mirror — le os arquivos planos do atuador (vidro read-only)
 import bridge_mirror as bridge  # ORACULO/:8765 mirror — audit/sessoes/git/skp por arquivo (vidro)
 import studio_mirror as studio  # ESTUDIO/:8781 mirror — o /api/state inteiro por arquivo (vidro)
+import curation_mirror as curation  # CURADORIA — corpus julgado do sweep + veredito humano
 
 OLLAMA = os.environ.get("BFF_OLLAMA", "http://127.0.0.1:11434").rstrip("/")
 MAX_BODY = 1 << 20  # 1 MiB — teto de corpo de POST (anti-DoS)
@@ -545,6 +546,25 @@ def dispatch(h) -> bool:
         return _ok(h, bridge.skp_view())
     if method == "GET" and path == "/api/bridge/gate/stream":
         return _bridge_gate_stream(h)
+    # CURADORIA (KICKOFF_CURADORIA): corpus julgado por ARQUIVO + human_verdict por CLIQUE
+    if method == "GET" and path == "/api/curation/plants":
+        return _ok(h, curation.plants_view())
+    m = re.match(r"^/api/curation/([^/]+)$", path)
+    if method == "GET" and m:
+        from urllib.parse import unquote
+        return _ok(h, curation.curation_view(unquote(m.group(1))))
+    m = re.match(r"^/api/curation/([^/]+)/verdict$", path)
+    if method == "POST" and m:
+        from urllib.parse import unquote
+        return _curation_verdict(h, unquote(m.group(1)), _body(h))
+    if method == "GET" and path.startswith("/variant-img/"):
+        from urllib.parse import unquote
+        img = curation.variant_image(unquote(path[len("/variant-img/"):]))
+        if img is None:
+            return _ok(h, {"error": "not_found"}, 404)
+        body, ctype = img
+        h._send(200, body, ctype)
+        return True
     if method == "GET" and path == "/api/runs":
         _seed_runs()
         with _LOCK:   # snapshot consistente (RUNS é mutado por _runner/_start_run)
@@ -629,6 +649,27 @@ def _decide(h, did: str, body: dict) -> bool:
             applied = {"ok": True, "proposal": moved}   # shape do antigo /api/proposal do :8781
             _state_cache.update(t=0.0, v=None)          # próximo /api/state já reflete o move
     return _ok(h, {"ok": True, "id": did, "choice": choice, "upstream": applied})
+
+
+def _curation_verdict(h, plant: str, body: dict) -> bool:
+    """POST /api/curation/<plant>/verdict — o CLIQUE do Felipe (única origem legítima
+    de human_verdict; rail do KICKOFF_CURADORIA). Append em human_verdicts.jsonl —
+    o corpus.jsonl do motor nunca é reescrito."""
+    verdict = str((body or {}).get("verdict") or "").upper()
+    variant_id = str((body or {}).get("variant_id") or "")
+    note = str((body or {}).get("note") or "")
+    if verdict not in curation.HUMAN_VERDICTS:
+        return _ok(h, {"ok": False, "error": "invalid_verdict",
+                       "hint": "verdict humano é IMPROVED|SAME|WORSE"}, 400)
+    try:
+        rec = curation.record_human_verdict(plant, variant_id, verdict, note)
+    except OSError as e:   # inclui PermissionError — dado montado read-only
+        return _ok(h, {"ok": False, "error": "verdict_write_unavailable",
+                       "detail": str(e)}, 503)
+    if rec is None:
+        return _ok(h, {"ok": False, "error": "unknown_variant",
+                       "plant": plant, "variant_id": variant_id}, 404)
+    return _ok(h, {"ok": True, "recorded": rec})
 
 
 def _bridge_gate_stream(h) -> bool:

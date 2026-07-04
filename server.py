@@ -36,7 +36,7 @@ PORT = int(os.environ.get("BFF_PORT", "8782"))
 
 # Prefixos de API: rota não tratada pelo dispatch → 404 JSON (JAMAIS o index do SPA —
 # /api desconhecido devolvendo HTML seria bug silencioso).
-_API_PREFIXES = ("/api/", "/img/", "/inbox-img/")
+_API_PREFIXES = ("/api/", "/img/", "/inbox-img/", "/variant-img/")
 # Páginas-vitrine do dashboard legado — RETIRADAS (absorvidas na página única :8782).
 VITRINE_GONE = {
     "/explica", "/grafo", "/fluxo", "/como-funciona",
