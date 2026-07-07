@@ -45,6 +45,7 @@ import noc_mirror as noc  # NOC mirror — le os arquivos planos do atuador (vid
 import bridge_mirror as bridge  # ORACULO/:8765 mirror — audit/sessoes/git/skp por arquivo (vidro)
 import studio_mirror as studio  # ESTUDIO/:8781 mirror — o /api/state inteiro por arquivo (vidro)
 import curation_mirror as curation  # CURADORIA — corpus julgado do sweep + veredito humano
+import decision_history_mirror as decision_history  # CARTEIRO — audit das decisões objetivas (vidro)
 
 OLLAMA = os.environ.get("BFF_OLLAMA", "http://127.0.0.1:11434").rstrip("/")
 MAX_BODY = 1 << 20  # 1 MiB — teto de corpo de POST (anti-DoS)
@@ -527,6 +528,10 @@ def dispatch(h) -> bool:
         return _ok(h, {"artifacts": _derive_artifacts(_upstream_state())})
     if method == "GET" and path == "/api/decisions":
         return _ok(h, {"decisions": _derive_decisions(_upstream_state())})
+    # HISTÓRICO do CARTEIRO (auto_decider) — vidro read-only do audit.jsonl por ARQUIVO
+    if method == "GET" and path == "/api/decisions/history":
+        lim = _q_int(query, "limit", 100, 1, 1000)
+        return _ok(h, decision_history.history_view(lim))
     # NOC (vidro read-only): runs/ledger REAIS do atuador + saude do lock — lidos de arquivo
     if method == "GET" and path == "/api/noc/ledger":
         return _ok(h, noc.ledger_view())
@@ -627,6 +632,16 @@ def _body(h) -> dict:
 def _ok(h, obj, code: int = 200) -> bool:
     h._json(code, obj)
     return True
+
+
+def _q_int(query: dict, key: str, default: int, lo: int, hi: int) -> int:
+    """Lê um inteiro do query-string (parse_qs → dict de listas), com clamp e fallback
+    honesto (valor ausente/malformado → default)."""
+    try:
+        v = int((query.get(key) or [str(default)])[0])
+    except (ValueError, TypeError):
+        return default
+    return max(lo, min(hi, v))
 
 
 def _decide(h, did: str, body: dict) -> bool:
