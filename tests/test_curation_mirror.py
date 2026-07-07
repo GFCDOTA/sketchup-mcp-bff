@@ -161,23 +161,43 @@ class CurationMirrorTest(unittest.TestCase):
         hv = self.root / PLANT / "human_verdicts.jsonl"
         corpus_before = corpus.read_bytes()
         hv_lines_before = len(hv.read_text("utf-8").splitlines())
+        # Commit A: tags[] + liked(bool|null) + batch_id gravados (curadoria_verdict.v1)
         rec = self.cm.record_human_verdict(PLANT, V1, "WORSE", note="teste",
-                                           t="2026-07-04T11:00:00Z")
+                                           t="2026-07-04T11:00:00Z", liked=False,
+                                           tags=["escuro", "escuro", "  "],
+                                           batch_id="hv_single")
         try:
             self.assertEqual(rec, {"variant_id": V1, "human_verdict": "WORSE",
-                                   "note": "teste", "t": "2026-07-04T11:00:00Z"})
+                                   "liked": False, "note": "teste",
+                                   "tags": ["escuro"],  # dedup + tira vazio
+                                   "batch_id": "hv_single", "t": "2026-07-04T11:00:00Z"})
             # rail: o corpus do MOTOR fica byte-a-byte intacto
             self.assertEqual(corpus.read_bytes(), corpus_before)
             self.assertEqual(len(hv.read_text("utf-8").splitlines()), hv_lines_before + 1)
-            # a galeria reflete o clique
+            # a galeria reflete o clique (verdict + liked + tags fundidos)
             by = {x["variant_id"]: x
                   for x in self.cm.curation_view(PLANT)["variants"]}
             self.assertEqual(by[V1]["human_verdict"]["verdict"], "WORSE")
+            self.assertEqual(by[V1]["human_verdict"]["liked"], False)
+            self.assertEqual(by[V1]["human_verdict"]["tags"], ["escuro"])
             self.assertEqual(self.cm.curation_view(PLANT)["awaiting_human"], 0)
         finally:
             # restaura o fake (ordem-independência entre testes, padrão do gabarito)
             text = hv.read_text("utf-8").splitlines(keepends=True)
             hv.write_text("".join(ln for ln in text if '"WORSE"' not in ln), "utf-8")
+
+    def test_record_human_verdict_defaults_liked_null_and_empty_tags(self):
+        # sem liked/tags → liked=None, tags=[] (schema aceita null; nada fabricado)
+        rec = self.cm.record_human_verdict(PLANT, V1, "SAME", t="2026-07-04T12:00:00Z",
+                                           batch_id="hv_defaults")
+        try:
+            self.assertIsNone(rec["liked"])
+            self.assertEqual(rec["tags"], [])
+            self.assertEqual(rec["batch_id"], "hv_defaults")
+        finally:
+            text = (self.root / PLANT / "human_verdicts.jsonl").read_text("utf-8").splitlines(keepends=True)
+            (self.root / PLANT / "human_verdicts.jsonl").write_text(
+                "".join(ln for ln in text if "hv_defaults" not in ln), "utf-8")
 
     def test_record_human_verdict_rejects_dishonest_input(self):
         # máquina não fala IMPROVED/SAME/WORSE — e a tela não fala CANDIDATE

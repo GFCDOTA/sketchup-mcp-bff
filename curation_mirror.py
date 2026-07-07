@@ -19,6 +19,7 @@ import json
 import os
 import re
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -201,7 +202,9 @@ def curation_view(plant: str) -> dict:
         human = None
         if h and h.get("human_verdict") in HUMAN_VERDICTS:
             human = {"verdict": h["human_verdict"], "note": str(h.get("note") or ""),
-                     "t": h.get("t")}
+                     "t": h.get("t"),
+                     "liked": h.get("liked") if isinstance(h.get("liked"), bool) else None,
+                     "tags": _clean_tags(h.get("tags")), "batch_id": h.get("batch_id")}
         elif isinstance(rec.get("human_verdict"), (dict, str)) and rec.get("human_verdict"):
             # inline no corpus (shape livre do schema) — o jsonl do clique tem precedência
             human = {"verdict": None, "note": "", "t": None, "inline": rec["human_verdict"]}
@@ -224,8 +227,54 @@ def curation_view(plant: str) -> dict:
 
 
 # ── escrita — ÚNICA, e só via clique na tela ────────────────────────────────────────────
+def _new_batch_id() -> str:
+    """Id de lote de curadoria (schema exige batch_id em todo veredito; um clique
+    único é um lote de um)."""
+    return "hv_" + uuid.uuid4().hex[:12]
+
+
+def _clean_tags(tags) -> list[str]:
+    """Tags do curadoria_verdict: strings não-vazias, sem duplicata, curtas (dedup
+    preservando ordem — determinístico)."""
+    out: list[str] = []
+    if isinstance(tags, list):
+        for tg in tags:
+            s = str(tg).strip()[:60]
+            if s and s not in out:
+                out.append(s)
+    return out[:20]
+
+
+def _verdict_rec(variant_id: str, verdict: str, *, liked=None, note=None,
+                 tags=None, batch_id: str, t: str | None = None) -> dict:
+    """Um registro curadoria_verdict.v1 — o ÚNICO shape que o BFF grava: variant_id,
+    human_verdict, liked(bool|null), note, tags[], batch_id, t (conforme
+    schemas/curadoria_verdict.schema.json do motor)."""
+    return {
+        "variant_id": variant_id,
+        "human_verdict": verdict,
+        "liked": liked if isinstance(liked, bool) else None,
+        "note": str(note or "")[:500],
+        "tags": _clean_tags(tags),
+        "batch_id": batch_id,
+        "t": t or _utcnow(),
+    }
+
+
+def _append_verdicts(plant: str, recs: list[dict]) -> None:
+    """Escreve N recs como N linhas JSONL sob UM ÚNICO _HV_LOCK (não N locks) —
+    corpus.jsonl NUNCA é tocado. OSError propaga → caller responde 503 honesto."""
+    if not recs:
+        return
+    payload = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in recs)
+    with _HV_LOCK:
+        with (_plant_dir(plant) / "human_verdicts.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(payload)
+
+
 def record_human_verdict(plant: str, variant_id: str, verdict: str,
-                         note: str = "", t: str | None = None) -> dict | None:
+                         note: str = "", t: str | None = None,
+                         liked=None, tags=None, batch_id: str | None = None) -> dict | None:
     """Grava o VEREDITO HUMANO — chamado SÓ pelo POST /api/curation/<plant>/verdict
     (clique do Felipe na tela; rail do kickoff — nenhum job/agente chama).
 
@@ -239,12 +288,9 @@ def record_human_verdict(plant: str, variant_id: str, verdict: str,
     known, _ = _last_wins(_read_jsonl_all(d / "corpus.jsonl"))
     if variant_id not in known:
         return None
-    rec = {"variant_id": variant_id, "human_verdict": verdict,
-           "note": str(note or "")[:500], "t": t or _utcnow()}
-    line = json.dumps(rec, ensure_ascii=False)
-    with _HV_LOCK:
-        with (d / "human_verdicts.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+    rec = _verdict_rec(variant_id, verdict, liked=liked, note=note, tags=tags,
+                       batch_id=batch_id or _new_batch_id(), t=t)
+    _append_verdicts(plant, [rec])
     fa.emit(f"data/runs/noc_variant_sweep/{plant}/human_verdicts.jsonl", "write", "human",
             repo=fa.REPO_ENGINE, endpoint=f"/api/curation/{plant}/verdict",
             label=f"human_verdict {verdict} — {variant_id}")
