@@ -32,6 +32,9 @@ services:
       # motor READ-ONLY — studio_mirror/scanner leem a árvore real do repo; a única
       # escrita possível (decisão de proposta) degrada 503 honesto com :ro.
       - ../sketchup-mcp:/repos/sketchup-mcp:ro
+      # EXCEÇÃO: data/runs (scratch) montado :rw pro botão "Rodar agora" escrever o
+      # gatilho do carteiro (carteiro_trigger). O atuador no host lê esse arquivo.
+      - ../sketchup-mcp/data/runs:/repos/sketchup-mcp/data/runs:rw
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
