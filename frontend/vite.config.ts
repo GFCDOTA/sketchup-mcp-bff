@@ -15,6 +15,7 @@ export default defineConfig({
       "/api": { target: BFF, changeOrigin: true },
       "/img": { target: BFF, changeOrigin: true },
       "/inbox-img": { target: BFF, changeOrigin: true },
+      "/variant-img": { target: BFF, changeOrigin: true },
     },
   },
 });

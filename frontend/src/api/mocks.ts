@@ -24,6 +24,7 @@ import type {
   WorkflowsResponse,
   Workflow,
   RunResponse,
+  FileEventsResponse,
 } from "./types";
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -38,7 +39,7 @@ const sec = (s: number): number => s * 1_000;
 // GET /api/status
 // ────────────────────────────────────────────────────────────────────────────
 export const status: StatusResponse = {
-  upstream: { ok: true, url: "http://localhost:8782" },
+  upstream: { ok: true, url: "E:/Claude/apps/sketchup-mcp" },   // motor legível por ARQUIVO (semântica nova)
   ollama: { ok: true, url: "http://localhost:11434", models: 3 },
   time: iso(),
 };
@@ -610,6 +611,21 @@ export const workflows: WorkflowsResponse = {
 };
 
 // ────────────────────────────────────────────────────────────────────────────
+// GET /api/file-map/events — feed "acontecendo agora" (atividade do BFF).
+// ────────────────────────────────────────────────────────────────────────────
+export const fileEvents: FileEventsResponse = {
+  cursor: 6,
+  events: [
+    { id: "ev-1", seq: 1, ts: iso(-sec(11)), repo: "sketchup-mcp-bff", path: "sketchup-mcp-bff/cockpit_api.py", op: "execute", source: "bff", status: "ok", endpoint: "/api/agents", label: "GET /api/agents" },
+    { id: "ev-2", seq: 2, ts: iso(-sec(10)), repo: "sketchup-mcp-bff", path: "sketchup-mcp-bff/cockpit_api.py", op: "execute", source: "bff", status: "ok", endpoint: "/api/agents", label: "deriva agents (de /api/state)" },
+    { id: "ev-3", seq: 3, ts: iso(-sec(8)), repo: "sketchup-mcp", path: "sketchup-mcp/.ai_bridge/", op: "read", source: "bff", status: "ok", endpoint: "/api/state", label: "read state (studio_mirror, por arquivo)" },
+    { id: "ev-4", seq: 4, ts: iso(-sec(6)), repo: "external", path: "ollama:/api/tags", op: "proxy", source: "ollama", status: "ok", endpoint: "/api/tags", label: "Ollama /api/tags (online)" },
+    { id: "ev-5", seq: 5, ts: iso(-sec(3)), repo: "sketchup-mcp-bff", path: "sketchup-mcp-bff/cockpit_api.py", op: "execute", source: "runner", status: "ok", runId: "run_2026_0628_build_35", label: "run agent criado (runner STUB)", confidence: "low" },
+    { id: "ev-6", seq: 6, ts: iso(-sec(1)), repo: "sketchup-mcp", path: "sketchup-mcp/artifacts/planta_74/furnished/sofa_v4.png", op: "read", source: "bff", status: "ok", label: "artifact render listado" },
+  ],
+};
+
+// ────────────────────────────────────────────────────────────────────────────
 // Respostas de POST genéricas (run disparada) — úteis em handlers de mock.
 // ────────────────────────────────────────────────────────────────────────────
 export const runStarted: RunResponse = { ok: true, runId: "run_2026_0628_new_99" };
@@ -654,6 +670,8 @@ export const mocks = {
   decisions,
   // GET /api/workflows
   workflows,
+  // GET /api/file-map/events
+  fileEvents,
   // POST /api/{agents|workflows}/:id/run
   runStarted,
   // helpers

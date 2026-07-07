@@ -2,47 +2,50 @@
 
 ## Visão geral
 
-O cockpit é um **frontend estático + BFF fino**. Ele não contém regra de negócio do
-estúdio: toda a lógica (ciclos, propostas, curadoria, LLMs) continua no
-`studio_dashboard.py` do repo `sketchup-mcp`. Aqui só vive a **camada de apresentação** e
-um servidor de borda que serve essa camada e repassa a API.
+O cockpit é um **frontend React (build estático) + BFF**. A regra de negócio do estúdio
+continua no repo `sketchup-mcp` (motor); o BFF é a borda que serve o app React
+(`frontend/dist`), expõe os endpoints do cockpit (`cockpit_api.py`), integra o Ollama e
+monta o `/api/state` **lendo os arquivos do motor** (`studio_mirror.py`, padrão
+`bridge_mirror`) — **`:8781` não é mais dependência**. Detalhes do frontend em
+[`../frontend/README.md`](../frontend/README.md).
 
 ```
-┌──────────┐   GET /             ┌────────────────────────┐   proxy /api/*        ┌───────────────────────┐
-│ browser  │ ─────────────────▶  │  BFF  (server.py)      │ ────────────────────▶ │ studio_dashboard.py    │
-│ :8782    │ ◀───── web/ ──────  │  + web/ (estático)     │ ◀──── JSON / PNG ──── │ upstream :8781         │
-└──────────┘   GET /api/state    └────────────────────────┘                       └───────────────────────┘
+┌──────────┐   GET /                  ┌──────────────────────────────┐   lê ARQUIVOS (ro)   ┌─────────────────────┐
+│ browser  │ ───────────────────────▶ │  BFF (server.py)             │ ───────────────────▶ │ sketchup-mcp (repo) │
+│ :8782    │ ◀──── frontend/dist ────  │  + cockpit_api + Ollama      │  studio_mirror /     │ .ai_bridge/ artifacts│
+└──────────┘   GET /api/*             │  + studio/bridge/noc_mirror  │  bridge/noc_mirror   │ tools/vitrine/ ...  │
+                                      └──────────────────────────────┘                      └─────────────────────┘
 ```
 
-- O browser sempre fala com **uma só origem** (`:8782`) — sem CORS.
-- `server.py` decide, por path, se **serve estático** ou se **faz proxy**.
-- O upstream é a fonte única de verdade dos dados.
+- O browser fala com **uma só origem** (`:8782`) — sem CORS.
+- `server.py` decide, por path: **rota nativa do cockpit** (cockpit_api) → **estático**.
+- A fonte de verdade dos dados do estúdio são os **arquivos do motor** (`fa.ENGINE_ROOT`);
+  o `/api/state` é reconstruído deles e os demais endpoints derivam dele.
 
 ## Roteamento do `server.py`
 
 | Path | Ação |
 |---|---|
-| `/`, `/assets/**`, `/favicon.svg` | **estático** de `web/` |
-| rota desconhecida (sem extensão) | **estático** `index.html` (SPA hash-routing) |
-| `/api/**`, `/img/**`, `/inbox-img/**` | **proxy** → upstream |
-| `/explica`, `/grafo`, `/fluxo`, `/como-funciona`, `/agents`, `/vitrine`, … | **proxy** → upstream (páginas "vitrine" do dashboard original) |
+| `/api/status`, `/api/models`, `/api/agents`, `/api/runs*`, `/api/decisions*`, `/api/workflows*`, `/api/artifacts` | **cockpit_api** (nativo) |
+| `/api/state`, `/api/kgraph`, `/api/consult/*`, `/img/**`, `/inbox-img/**` | **nativo (studio_mirror — leitura de arquivo)** |
+| páginas-vitrine legadas (`/explica`, `/grafo`, …) | **410 Gone** (absorvidas na página única) |
+| `/api/**`, `/img/**` não tratados | **404 JSON** (nunca o index do SPA) |
+| `/`, `/assets/**`, `/favicon.svg` | **estático** de `frontend/dist` |
+| rota desconhecida (sem extensão) | **estático** `index.html` (fallback do React Router) |
 
-O frontend usa **hash-routing** (`#/overview`, `#/agents`, …) justamente para não colidir
-com as rotas reais que o upstream serve (ex.: `/agents` é uma página da vitrine).
+O frontend usa **React Router** (BrowserRouter). O `server.py` faz fallback para `index.html`
+em rotas desconhecidas, então deep-links (`/docs`, `/runs/:id`) e refresh funcionam.
 
-Resiliência: se o upstream estiver fora do ar, `/api/*` responde `502` com um JSON de
-diagnóstico (sem fabricar dados). Com `BFF_MOCK=1`, `/api/state` é servido do snapshot.
+Resiliência: se os arquivos do motor estiverem ausentes/ilegíveis, cada painel degrada
+**honesto** (coleção vazia ou `{live:false, reason}` — sem fabricar dados) e o Live System
+Map aponta o ENGINE_ROOT como problema. Com `BFF_MOCK=1`, `/api/state` é servido do snapshot.
 
-## Fluxo de dados no frontend
+## Frontend (React)
 
-`api.js` expõe um **store** com polling:
-
-1. `store.startPolling(4000)` busca `/api/state` a cada 4s.
-2. Cada resposta atualiza `store.data` + `store.status` (`live` / `mock` / `offline`).
-3. `store` notifica os assinantes → `app.js` re-renderiza a view ativa e os badges.
-
-A view ativa é função pura do estado: `view.render(state) -> htmlString`. Efeitos
-colaterais (cliques, ações POST) são ligados em `view.mount(root, ctx)`.
+O frontend (`frontend/`) é React + TS + Vite + Tailwind + Radix + TanStack Query. **Estado de
+servidor** vive no Query (sobre um client tipado em `src/api/`, com SSE para logs de run ao
+vivo); **UI-state** (command palette) no Zustand. O contrato está em `src/api/types.ts`.
+Design system, hooks e como adicionar uma tela: [`../frontend/README.md`](../frontend/README.md).
 
 ## Contrato `GET /api/state`
 
@@ -62,43 +65,23 @@ Chaves consumidas pelas views:
 | `learning`, `patches` | Referências |
 | `knowledge`, `references` (`by_kind`/`by_theme`), `consult` | Documentação |
 
-## Design system
+## Endpoints do cockpit (`cockpit_api.py`)
 
-Tudo deriva de **tokens** (`tokens.css`): superfícies do escuro, marca dourada + azul
-interativo, semânticos (`ok/warn/danger/info/purple/orange`), escala de spacing 4px,
-raios, sombras e tipografia (Inter + JetBrains Mono, com fallback `system-ui`).
+| endpoint | origem dos dados |
+|---|---|
+| `GET /api/status` | motor legível por arquivo (ENGINE_ROOT) + Ollama |
+| `GET /api/models` · `POST /api/models/chat` | Ollama (`:11434`) |
+| `GET /api/state` · `/api/kgraph` · `/api/consult/*` · `/img/**` · `/inbox-img/**` | **studio_mirror** (arquivos do motor) |
+| `GET /api/agents` · `/api/workflows` · `/api/decisions` · `/api/artifacts` | derivados do state espelhado |
+| `GET /api/runs` · `/api/runs/:id` · `/api/runs/:id/logs` (SSE) | registry de runs (runner **stub**) |
+| `POST /api/agents/:id/run` · `/api/workflows/:id/run` | cria um run |
+| `POST /api/decisions/:id/respond` | move a proposta por ARQUIVO (`.ai_bridge/proposals/pending→approved\|rejected`) — única escrita; mount `:ro` ⇒ `503` |
 
-Camadas de CSS, em ordem de carga:
-
-1. `tokens.css` — variáveis (única fonte de cor/medida).
-2. `base.css` — reset, tipografia, scrollbars, estados loading/empty/error.
-3. `components.css` — primitivos (card, pill, badge, button, tab, metric, log, timeline, pipeline, agente, galeria, callout).
-4. `layout.css` — app shell (sidebar, topbar, grid de 12 colunas, command palette, toast).
-5. `views.css` — composições específicas de cada tela.
-
-Primitivos equivalentes em JS vivem em `ui.js` (`pill`, `badge`, `metric`, `card`,
-`pipeline`, `emptyState`, `errorState`, `skeleton`) e `icons.js` (`icon(name)`).
-
-## Como adicionar uma página
-
-1. Crie `web/assets/js/views/minha.js` exportando:
-   ```js
-   export default {
-     id: "minha", label: "Minha", icon: "grid",
-     title: "Minha página", subtitle: "…",
-     badge: (state) => null,           // opcional (número no menu)
-     render(state, ctx) { return "…html…"; },
-     mount(root, ctx) { /* listeners */ },
-   };
-   ```
-2. Importe e registre em `app.js` (`NAV`).
-3. Use os primitivos de `ui.js`/`icons.js`; estilos específicos vão em `views.css`.
-
-`ctx` oferece `ctx.post(path, body, okMsg)` (POST + toast + refresh), `ctx.refresh()`,
-`ctx.navigate(id)` e `ctx.toast(msg, tone)`.
+Endurecimentos (review): bind `127.0.0.1` por padrão, teto de body 1 MiB (413), heartbeat no
+SSE, locks no registry de runs, validação de id em decisions, status de agente normalizado.
 
 ## Critérios preservados
 
-- `http://localhost:8782/` continua funcionando, com **dados reais** (via proxy).
+- `http://localhost:8782/` é o cockpit React, com **dados reais** (derivados dos arquivos do motor).
 - O **domínio** do app (Interior Studio / sketchup-mcp) é mantido — nada inventado.
-- Nenhuma mudança no repo de origem `GFCDOTA/sketchup-mcp`.
+- Nenhuma mudança no repo de origem do estúdio.

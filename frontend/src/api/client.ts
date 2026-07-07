@@ -6,10 +6,18 @@ import type {
   AgentsResponse, RunsResponse, RunDetailResponse, RunLogsResponse,
   ArtifactsResponse, DecisionsResponse, DecisionRespondRequest, DecisionRespondResponse,
   WorkflowsResponse, RunTriggerResponse, LogLine, StudioState,
+  FileEventsResponse, FileActivityEvent,
+  NocLedgerResponse, NocStatusResponse,
+  BridgeHealth, BridgeGate, BridgeSessions, BridgeGit, BridgeSkp,
+  GateAccessEvent, GateStreamSeed,
+  CurationResponse, CurationPlantsResponse, CurationVerdictRequest, CurationVerdictResponse,
 } from "./types";
 import { mocks } from "./mocks";
 
 export const USE_MOCKS = import.meta.env.VITE_MOCKS === "1";
+
+/** Planta default da curadoria — hoje só a planta_74 tem corpus julgado. */
+export const DEFAULT_PLANT = "planta_74";
 
 class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -102,6 +110,93 @@ export const api = {
     if (USE_MOCKS) return delay().then(() => ({}) as StudioState);
     return http("/api/state");
   },
+  async fileEvents(since = 0): Promise<FileEventsResponse> {
+    if (USE_MOCKS) return delay(120).then(() => mocks.fileEvents);
+    return http(`/api/file-map/events?since=${since}`);
+  },
+  async nocLedger(): Promise<NocLedgerResponse> {
+    if (USE_MOCKS) return delay().then(() => ({
+      live: true, visualReview: [],
+      tasks: [{ taskId: "T1", title: "exemplo (mock)", status: "COMMITTED", branch: "chore/noc-t1",
+        worktree: "", dryRun: false, rc: 0, verifyChecked: ["x.md"], verifyMissing: [], outTail: "mock" }],
+    }) as NocLedgerResponse);
+    return http("/api/noc/ledger");
+  },
+  async nocStatus(): Promise<NocStatusResponse> {
+    if (USE_MOCKS) return delay().then(() => ({
+      nocRoot: "(mock)", present: true, live: true, queueCount: 1, taskCount: 1,
+      lock: { state: "free", alive: false, label: "ocioso (mock)" },
+    }) as NocStatusResponse);
+    return http("/api/noc/status");
+  },
+  // ── Oráculo/:8765 espelhado por ARQUIVO (bridge_mirror) ──────────────────────
+  async bridgeHealth(): Promise<BridgeHealth> {
+    if (USE_MOCKS) return delay().then(() => ({
+      level: "YELLOW", reasons: ["2 repos com mudança não-commitada (mock)"],
+      signals: { visualReviewPending: 0, dirtyRepos: 2, activeSessions: 3, gateLastActivityS: 42, nocLock: "free" },
+    }) as BridgeHealth);
+    return http("/api/bridge/health");
+  },
+  async bridgeGate(): Promise<BridgeGate> {
+    if (USE_MOCKS) return delay().then(() => ({
+      live: true, consultCount: 12, lastActivityAgeS: 42,
+      consults: [{ ts: Date.now() / 1000, model: "claude-opus-4-8", tier: "deep", effort: "xhigh", mode: "default", qChars: 424, aChars: 1907, durSec: 72.6 }],
+    }) as BridgeGate);
+    return http("/api/bridge/gate");
+  },
+  async bridgeSessions(): Promise<BridgeSessions> {
+    if (USE_MOCKS) return delay().then(() => ({
+      live: true, total: 84, active: 3,
+      sessions: [{ id: "74e148f0", project: "E--Claude", idleSec: 2, state: "ACTIVE" }],
+    }) as BridgeSessions);
+    return http("/api/bridge/sessions");
+  },
+  async bridgeGit(): Promise<BridgeGit> {
+    if (USE_MOCKS) return delay().then(() => ({
+      live: true, worktrees: 5, dirtyRepos: ["sketchup-mcp"],
+      repos: [{ name: "sketchup-mcp", branch: "chore/ci-gate", dirty: 11, lastCommit: "b0f11e4 chore(ci)" }],
+    }) as BridgeGit);
+    return http("/api/bridge/git");
+  },
+  async bridgeSkp(): Promise<BridgeSkp> {
+    if (USE_MOCKS) return delay().then(() => ({
+      live: true, plants: [{ plant: "planta_74", skpCount: 7, latestSkp: "planta_74_furnished.skp", latestMtime: Date.now() / 1000, renders: 217 }],
+    }) as BridgeSkp);
+    return http("/api/bridge/skp");
+  },
+  // ── Curadoria (KICKOFF_CURADORIA): corpus julgado por ARQUIVO + clique do humano ──
+  async curation(plant: string): Promise<CurationResponse> {
+    if (USE_MOCKS) return delay().then(() => ({
+      live: true, plant, counts: { CANDIDATE: 1 }, awaiting_human: 1, themes: ["warm_compact"],
+      variants: [{
+        variant_id: `${plant}__baseline__warm_compact__L0`, created_at: "2026-07-04T05:00:14Z",
+        plant, verdict: "CANDIDATE", machine_score: { value: 0.6, label: "machine_provisional" },
+        params: { style: null, theme: "", layout_seed: 0 }, theme: "warm_compact",
+        gates: { geometry_sanity: "PASS" }, n_boxes: 200, img: null, renderer: "su-free",
+        top_level_verdict: "WARN", discriminated: false,
+        axes: { wall_fidelity: { verdict: "FAIL", evidence: "sem shell (mock)" } },
+        findings_count: 5,
+        patterns: [{ pattern: "paleta warm compacta (mock)", verdict: "works", why: "coesa" }],
+        promotion_note: null, revisions: 3, human_verdict: null,
+      }],
+      patterns: { total: 1, works: 1, fails: 0, neutral: 0, patterns: [
+        { pattern: "paleta warm compacta (mock)", works: 1, fails: 0, neutral: 0,
+          themes: ["warm_compact"], variants: [`${plant}__baseline__warm_compact__L0`], why: ["coesa"] },
+      ] },
+    }) as CurationResponse);
+    return http(`/api/curation/${encodeURIComponent(plant)}`);
+  },
+  async curationPlants(): Promise<CurationPlantsResponse> {
+    if (USE_MOCKS) return delay().then(() => ({ plants: ["planta_74"], root: "(mock)" }));
+    return http("/api/curation/plants");
+  },
+  // o CLIQUE — única origem legítima de human_verdict (rail do kickoff)
+  async respondCurationVerdict(plant: string, body: CurationVerdictRequest): Promise<CurationVerdictResponse> {
+    if (USE_MOCKS) return delay().then(() => ({ ok: true }));
+    return http(`/api/curation/${encodeURIComponent(plant)}/verdict`, {
+      method: "POST", body: JSON.stringify(body),
+    });
+  },
 };
 
 /* ── SSE: stream de logs ao vivo de um run ─────────────────────────────────-*/
@@ -142,6 +237,67 @@ export function streamRunLogs(
       es.close();
       onEnd?.();
     }
+  };
+  return () => es.close();
+}
+
+/* ── SSE: feed "acontecendo agora" — eventos de atividade do BFF ─────────────-*/
+export function streamFileEvents(
+  onEvent: (e: FileActivityEvent) => void,
+  onError?: () => void,
+): () => void {
+  if (USE_MOCKS) {
+    let i = 0;
+    const seed = mocks.fileEvents.events;
+    const t = setInterval(() => {
+      onEvent({ ...seed[i % seed.length], id: `mock-${i}`, seq: 1000 + i, ts: new Date().toISOString() });
+      i++;
+    }, 1800);
+    return () => clearInterval(t);
+  }
+  const es = new EventSource(`/api/file-map/events/stream`);
+  es.onmessage = (ev) => {
+    try {
+      onEvent(JSON.parse(ev.data) as FileActivityEvent);
+    } catch {
+      /* ignora linha malformada / heartbeat */
+    }
+  };
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) {
+      es.close();
+      onError?.();
+    }
+  };
+  return () => es.close();
+}
+
+/* ── SSE: ACESSOS ao gate ao vivo (tail do audit.jsonl) ─────────────────────-*/
+export function streamGateAccess(
+  onEvent: (e: GateAccessEvent) => void,
+  onSeed?: (seed: GateStreamSeed) => void,
+  onError?: () => void,
+): () => void {
+  if (USE_MOCKS) {
+    onSeed?.({ consultCount: 12, lastActivityAgeS: 42 });
+    let i = 0;
+    const t = setInterval(() => {
+      onEvent(i % 3 === 0
+        ? { kind: "consult", ts: Date.now() / 1000, model: "claude-opus-4-8", tier: "deep", durSec: 30 + i, qChars: 420, aChars: 1500 }
+        : { kind: "heartbeat", ts: Date.now() / 1000, session: "74e148f0", cycle: 10 + i });
+      i++;
+    }, 2200);
+    return () => clearInterval(t);
+  }
+  const es = new EventSource(`/api/bridge/gate/stream`);
+  es.addEventListener("seed", (ev) => {
+    try { onSeed?.(JSON.parse((ev as MessageEvent).data) as GateStreamSeed); } catch { /* ignora */ }
+  });
+  es.onmessage = (ev) => {
+    try { onEvent(JSON.parse(ev.data) as GateAccessEvent); } catch { /* keep-alive/malformada */ }
+  };
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) { es.close(); onError?.(); }
   };
   return () => es.close();
 }

@@ -1,52 +1,51 @@
 import { useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
 import { Bot, Cpu, Play, Wrench } from "lucide-react";
 import { useAgents, useRunAgent } from "@/api/hooks";
 import type { Agent } from "@/api/types";
-import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StatusPill } from "@/components/ui/status-pill";
 import { EmptyState, ErrorState } from "@/components/states";
 import { SkeletonText } from "@/components/ui/skeleton";
+import { staggerContainer, staggerItem } from "@/components/flow/animated-section";
 
-export default function Agents() {
+/** Corpo da aba "Agentes" da tela Operação (sem header próprio). */
+export function AgentsPanel() {
   const { data, isLoading, isError, error } = useAgents();
   const runAgent = useRunAgent();
   const navigate = useNavigate();
 
+  if (isError) return <ErrorState message={error?.message} />;
+  if (isLoading)
+    return (
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Card key={i}><CardContent className="pt-4"><SkeletonText lines={4} /></CardContent></Card>
+        ))}
+      </div>
+    );
+  if ((data?.agents ?? []).length === 0) return <EmptyState icon={Bot} title="Sem agentes" />;
+
   return (
-    <>
-      <PageHeader title="Agentes" subtitle="Organização multi-agente — status, modelo, ferramentas e disparo de run" />
-      {isError ? (
-        <ErrorState message={error?.message} />
-      ) : isLoading ? (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Card key={i}><CardContent className="pt-4"><SkeletonText lines={4} /></CardContent></Card>
-          ))}
-        </div>
-      ) : (data?.agents ?? []).length === 0 ? (
-        <EmptyState icon={Bot} title="Sem agentes" />
-      ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {data!.agents.map((a) => (
-            <AgentCard
-              key={a.id}
-              agent={a}
-              onRun={() => runAgent.mutate({ id: a.id }, { onSuccess: (r) => r.runId && navigate(`/runs/${r.runId}`) })}
-              running={runAgent.isPending && runAgent.variables?.id === a.id}
-            />
-          ))}
-        </div>
-      )}
-    </>
+    <motion.div variants={staggerContainer} initial="hidden" animate="show" className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {data!.agents.map((a) => (
+        <motion.div key={a.id} variants={staggerItem} whileHover={{ y: -3 }} transition={{ type: "spring", stiffness: 300, damping: 22 }}>
+          <AgentCard
+            agent={a}
+            onRun={() => runAgent.mutate({ id: a.id }, { onSuccess: (r) => r.runId && navigate(`/runs/${r.runId}`) })}
+            running={runAgent.isPending && runAgent.variables?.id === a.id}
+          />
+        </motion.div>
+      ))}
+    </motion.div>
   );
 }
 
 function AgentCard({ agent, onRun, running }: { agent: Agent; onRun: () => void; running: boolean }) {
   return (
-    <Card className="flex flex-col">
+    <Card className="flex h-full flex-col">
       <CardContent className="flex flex-1 flex-col gap-3 pt-4">
         <div className="flex items-start gap-3">
           <span className="grid size-10 shrink-0 place-items-center rounded-md border border-border bg-secondary text-muted-foreground">

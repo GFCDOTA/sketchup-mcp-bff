@@ -14,7 +14,7 @@ export interface OkResponse {
 
 /* ───────────────────────────── GET /api/status ───────────────────────────── */
 
-/** Saúde de um serviço a montante (upstream legado, ollama, etc.). */
+/** Saúde de uma dependência (chave `upstream` = motor legível por ARQUIVO, ollama, etc.). */
 export interface ServiceHealth {
   ok: boolean;
   url: string;
@@ -42,6 +42,8 @@ export interface ModelInfo {
   parameterSize?: string;
   quantization?: string;
   modifiedAt?: IsoString;
+  /** false = modelo de embedding (vetoriza pro RAG) — /api/chat do Ollama dá 400 nele. */
+  chat?: boolean;
 }
 
 /** GET /api/models — lista de modelos; `source` indica origem da listagem. */
@@ -486,3 +488,263 @@ export interface StudioState {
 
 /** Alias de compat: resposta de disparo de run. */
 export type RunResponse = RunTriggerResponse;
+
+/* ───────────────────────────── Live activity (file-map) ───────────────────────────── */
+/* Feed "acontecendo agora": eventos de atividade emitidos pelo BFF (proxy/ollama/derive/
+   serve/runner). Espelha o FileActivityEvent do file_activity.py. */
+
+export type FileOp =
+  | "read" | "write" | "execute" | "serve" | "proxy" | "generate" | "modify" | "delete" | "error" | "classify";
+export type FileSource = "frontend" | "bff" | "upstream" | "runner" | "agent" | "ollama" | "watcher" | "manual";
+export type FileEventStatus = "started" | "ok" | "warn" | "error";
+
+/** Um evento de atividade ao vivo (item do SSE /api/file-map/events/stream). */
+export interface FileActivityEvent {
+  id: string;
+  seq: number;
+  ts: IsoString;
+  repo: "sketchup-mcp-bff" | "sketchup-mcp" | "external";
+  path: string;
+  op: FileOp;
+  source: FileSource;
+  status: FileEventStatus;
+  endpoint?: string;
+  runId?: string;
+  workflowId?: string;
+  agentId?: string;
+  label?: string;
+  confidence?: "high" | "medium" | "low";
+  details?: Record<string, unknown>;
+}
+
+/** GET /api/file-map/events — backlog recente + cursor. */
+export interface FileEventsResponse {
+  events: FileActivityEvent[];
+  cursor: number;
+}
+
+/* ── NOC mirror (vidro read-only do atuador autônomo) ───────────────────────*/
+export interface NocLockState {
+  state: "held" | "stale" | "free";
+  alive: boolean;
+  label: string;
+  owner?: string;
+  pid?: number;
+  ageS?: number;
+  staleForS?: number;
+}
+export interface NocTask {
+  taskId: string;
+  title: string;
+  status: string; // COMMITTED / VERIFY_FAILED / VISUAL_REVIEW_QUEUED / NOOP / DRY_RUN / ...
+  branch?: string | null;
+  worktree?: string | null;
+  dryRun: boolean;
+  rc?: number | null;
+  verifyChecked: string[];
+  verifyMissing: string[];
+  outTail: string;
+  ts?: number | null;
+}
+export interface NocLedgerResponse {
+  live: boolean;
+  reason?: string;
+  tasks: NocTask[];
+  visualReview: NocTask[];
+  rawLines?: number;
+  source?: string;
+}
+export interface NocStatusResponse {
+  nocRoot: string;
+  present: boolean;
+  lock: NocLockState;
+  queueCount: number;
+  taskCount: number;
+  live: boolean;
+}
+
+/* ── Oráculo/:8765 espelhado por ARQUIVO (bridge_mirror — vidro read-only) ──────────────*/
+export interface BridgeHealth {
+  level: "GREEN" | "YELLOW" | "RED";
+  reasons: string[];
+  signals: {
+    visualReviewPending: number;
+    dirtyRepos: number;
+    activeSessions: number | null;
+    gateLastActivityS: number | null;
+    nocLock: string | null;
+  };
+}
+export interface GateConsult {
+  ts: number;
+  model?: string | null;
+  tier?: string | null;
+  effort?: string | null;
+  mode?: string | null;
+  qChars?: number | null;
+  aChars?: number | null;
+  durSec?: number | null;
+}
+export interface BridgeGate {
+  live: boolean;
+  reason?: string;
+  consults: GateConsult[];
+  consultCount: number;
+  lastActivityAgeS: number | null;
+}
+/** um ACESSO ao gate ao vivo (linha nova do audit.jsonl, via SSE). */
+export interface GateAccessEvent {
+  kind: "consult" | "heartbeat" | string;
+  ts: number;
+  model?: string | null;
+  tier?: string | null;
+  durSec?: number | null;
+  qChars?: number | null;
+  aChars?: number | null;
+  session?: string | null;
+  cycle?: number | null;
+}
+export interface GateStreamSeed {
+  consultCount: number;
+  lastActivityAgeS: number | null;
+}
+export interface ClaudeSession {
+  id: string;
+  project: string;
+  idleSec: number;
+  state: "ACTIVE" | "IDLE" | "STOPPED";
+}
+export interface BridgeSessions {
+  live: boolean;
+  reason?: string;
+  sessions: ClaudeSession[];
+  total: number;
+  active: number;
+}
+export interface GitRepo {
+  name: string;
+  branch: string;
+  dirty: number;
+  lastCommit: string;
+}
+export interface BridgeGit {
+  live: boolean;
+  repos: GitRepo[];
+  worktrees: number;
+  dirtyRepos: string[];
+}
+export interface SkpPlant {
+  plant: string;
+  skpCount: number;
+  latestSkp: string;
+  latestMtime: number;
+  renders: number;
+}
+export interface BridgeSkp {
+  live: boolean;
+  reason?: string;
+  plants: SkpPlant[];
+}
+
+/* ─────────────── Curadoria (KICKOFF_CURADORIA) — corpus julgado + clique do humano ─────────────── */
+
+/** Verdict da MÁQUINA sobre uma variante — NUNCA IMPROVED/SAME/WORSE (esses são exclusivos do humano). */
+export type MachineVerdict = "CANDIDATE" | "FAIL" | "PENDING_VISION";
+/** Verdict do HUMANO (Felipe) — só nasce de clique na tela de curadoria. */
+export type HumanVerdictValue = "IMPROVED" | "SAME" | "WORSE";
+export type GateVerdict = "PASS" | "WARN" | "FAIL";
+
+/** Um dos 7 eixos do visual_findings.v1 (FP-032). */
+export interface CurationAxis {
+  verdict: GateVerdict;
+  evidence: string;
+}
+
+/** Um padrão de design observado pelo painel de juízes (memória pré-FP-035). */
+export interface DesignPattern {
+  pattern: string;
+  verdict: "works" | "fails" | "neutral";
+  why: string;
+}
+
+/** Veredito humano fundido de human_verdicts.jsonl (last-wins por variant_id). */
+export interface HumanVerdict {
+  verdict: HumanVerdictValue | null;
+  note: string;
+  t: string | null;
+}
+
+/** Uma variante julgada do corpus (last-wins do corpus.jsonl). */
+export interface CurationVariant {
+  variant_id: string;
+  created_at: string | null;
+  plant: string;
+  verdict: MachineVerdict;
+  /** objeto inteiro — o label "machine_provisional" é honestidade, não decoração */
+  machine_score: { value: number | null; label: string } | null;
+  params: { style: string | null; theme: string; layout_seed: number; layout_source?: string };
+  theme: string;
+  gates: Record<string, GateVerdict>;
+  n_boxes: number | null;
+  img: string | null;
+  renderer: string | null;
+  top_level_verdict: string | null;
+  discriminated: boolean;
+  axes: Record<string, CurationAxis>;
+  findings_count: number;
+  patterns: DesignPattern[];
+  promotion_note: string | null;
+  /** nº de appends no corpus (transparência do upgrade PENDING_VISION→CANDIDATE) */
+  revisions: number;
+  human_verdict: HumanVerdict | null;
+}
+
+/** Agregação de um pattern por todo o corpus (Fatia 3 — "o que já aprendemos"). */
+export interface PatternAgg {
+  pattern: string;
+  works: number;
+  fails: number;
+  neutral: number;
+  themes: string[];
+  variants: string[];
+  why: string[];
+}
+
+export interface CurationPatterns {
+  total: number;
+  works: number;
+  fails: number;
+  neutral: number;
+  patterns: PatternAgg[];
+}
+
+/** GET /api/curation/<plant> — galeria + padrões numa leitura só. */
+export interface CurationResponse {
+  live: boolean;
+  plant: string;
+  reason?: string;
+  counts: Record<string, number>;
+  awaiting_human?: number;
+  themes: string[];
+  variants: CurationVariant[];
+  patterns: CurationPatterns;
+}
+
+/** GET /api/curation/plants */
+export interface CurationPlantsResponse {
+  plants: string[];
+  root: string;
+}
+
+/** POST /api/curation/<plant>/verdict — o clique do Felipe. */
+export interface CurationVerdictRequest {
+  variant_id: string;
+  verdict: HumanVerdictValue;
+  note?: string;
+}
+
+export interface CurationVerdictResponse {
+  ok: boolean;
+  recorded?: { variant_id: string; human_verdict: HumanVerdictValue; note: string; t: string };
+  error?: string;
+}

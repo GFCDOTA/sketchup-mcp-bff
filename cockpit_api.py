@@ -1,14 +1,19 @@
 """cockpit_api.py — endpoints "AI Cockpit" do BFF (montados em :8782 pelo server.py).
 
 O BFF é o PONTO ÚNICO de integração: o frontend React fala só com /api/*; quem conversa
-com modelos locais (Ollama :11434), com o dashboard legado (upstream :8781) e com o
-"agent runner" é aqui. O frontend NUNCA chama Ollama direto.
+com modelos locais (Ollama :11434), com o estúdio espelhado por ARQUIVO (studio_mirror —
+o :8781 deixou de ser dependência) e com o "agent runner" é aqui. O frontend NUNCA chama
+Ollama direto.
 
 Endpoints:
-    GET  /api/status                  saúde (upstream + ollama)
+    GET  /api/status                  saúde (motor por arquivo + ollama)
     GET  /api/models                  modelos do Ollama (/api/tags)
     POST /api/models/chat             chat com um modelo (proxy p/ Ollama /api/chat)
-    GET  /api/agents                  agentes (derivado do /api/state legado)
+    GET  /api/state                   estado do estúdio (studio_mirror — por ARQUIVO)
+    GET  /api/kgraph                  mapa de conhecimento (tools/vitrine/kgraph.json)
+    GET  /api/consult/*               consult GPT (arquivos de .ai_bridge/interior_consult)
+    GET  /img/* /inbox-img/*          imagens de render/inbox (bytes do disco, com guard)
+    GET  /api/agents                  agentes (derivado do state espelhado)
     POST /api/agents/<id>/run         dispara um run do agente (runner stub)
     GET  /api/runs                     histórico de runs
     GET  /api/runs/<id>                detalhe (steps, inputs/outputs, artifacts)
@@ -31,17 +36,39 @@ import re
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-UPSTREAM = os.environ.get("BFF_UPSTREAM", "http://127.0.0.1:8781").rstrip("/")
+import file_activity as fa  # Live System Map — eventos de atividade + scanner dos repos
+import noc_mirror as noc  # NOC mirror — le os arquivos planos do atuador (vidro read-only)
+import bridge_mirror as bridge  # ORACULO/:8765 mirror — audit/sessoes/git/skp por arquivo (vidro)
+import studio_mirror as studio  # ESTUDIO/:8781 mirror — o /api/state inteiro por arquivo (vidro)
+import curation_mirror as curation  # CURADORIA — corpus julgado do sweep + veredito humano
+
 OLLAMA = os.environ.get("BFF_OLLAMA", "http://127.0.0.1:11434").rstrip("/")
 MAX_BODY = 1 << 20  # 1 MiB — teto de corpo de POST (anti-DoS)
+# modo MOCK do /api/state (migrou do proxy do server.py — o dispatch nativo o sombrearia)
+_MOCK = os.environ.get("BFF_MOCK", "") not in ("", "0", "false", "False")
+_MOCKS_DIR = Path(__file__).resolve().parent / "mocks"
 
 _LOCK = threading.Lock()
 RUNS: dict[str, dict] = {}
 _SEEDED = False
 _run_seq = 0
+
+# ── throttle de instrumentação (não floodar o timeline com polling de fundo) ──
+_emit_at: dict[str, float] = {}
+
+
+def _gate(key: str, interval: float) -> bool:
+    """True se já passou `interval`s desde o último emit dessa chave (inclua o
+    estado na chave p/ transições sempre dispararem)."""
+    now = time.time()
+    if now - _emit_at.get(key, 0.0) >= interval:
+        _emit_at[key] = now
+        return True
+    return False
 
 
 def _now() -> str:
@@ -56,18 +83,32 @@ def _gen_id(prefix: str) -> str:
     return f"{prefix}-{int(time.time())%100000:05d}-{n:03d}"
 
 
-# ── upstream (state legado) ──────────────────────────────────────────────────
+# ── estado do estúdio (studio_mirror — por ARQUIVO; era GET :8781/api/state) ──
 _state_cache = {"t": 0.0, "v": None}
 
 
 def _upstream_state() -> dict:
+    """Mesmo nome/assinatura/cache de antes — o corpo trocou o GET :8781 pelo
+    studio_mirror.state_view() (leitura de arquivo). Os _derive_* não mudam."""
     if _state_cache["v"] is not None and time.time() - _state_cache["t"] < 2.0:
         return _state_cache["v"]
     try:
-        with urlopen(UPSTREAM + "/api/state", timeout=8) as r:
-            v = json.loads(r.read())
-    except (URLError, HTTPError, OSError, json.JSONDecodeError):
+        v = studio.state_view()
+        if not fa.ENGINE_ROOT.is_dir():
+            # views degradam pra coleções vazias sem levantar — sucesso aqui seria fabricado
+            if _gate("up:err", 6.0):
+                fa.emit("sketchup-mcp/.ai_bridge/", "error", "bff", repo="sketchup-mcp",
+                        status="error", endpoint="/api/state",
+                        label="motor ilegível (ENGINE_ROOT ausente) — state degradado")
+        elif _gate("up:ok", 8.0):
+            fa.emit("sketchup-mcp/.ai_bridge/", "read", "bff", repo="sketchup-mcp",
+                    endpoint="/api/state", label="read state (studio_mirror, por arquivo)")
+    except Exception:  # noqa: BLE001 — arquivo do motor corrompido/ausente não derruba o BFF
         v = {}
+        if _gate("up:err", 6.0):
+            fa.emit("sketchup-mcp/.ai_bridge/", "error", "bff", repo="sketchup-mcp",
+                    status="error", endpoint="/api/state",
+                    label="studio_mirror falhou ao ler o motor (ENGINE_ROOT?)")
     _state_cache.update(t=time.time(), v=v)
     return v
 
@@ -76,9 +117,24 @@ def _upstream_state() -> dict:
 def _ollama_get(path: str, timeout: float = 4.0):
     try:
         with urlopen(OLLAMA + path, timeout=timeout) as r:
-            return json.loads(r.read())
+            data = json.loads(r.read())
+        if _gate("oll:ok", 8.0):
+            fa.emit(f"ollama:{path}", "proxy", "ollama", repo="external",
+                    endpoint=path, label=f"Ollama {path} (online)")
+        return data
     except (URLError, HTTPError, OSError, json.JSONDecodeError):
+        if _gate("oll:err", 6.0):
+            fa.emit(f"ollama:{path}", "error", "ollama", repo="external", status="error",
+                    endpoint=path, label=f"Ollama {path} offline")
         return None
+
+
+def _is_embedding_model(name: str, family: str) -> bool:
+    """Modelo de EMBEDDING (ex. nomic-embed-text, família bert) vetoriza texto pro
+    RAG — o /api/chat do Ollama devolve HTTP 400 pra ele. Detectar aqui evita o
+    erro seco na tela de modelos (bug real: Felipe clicou e levou 'ollama HTTP 400')."""
+    n, f = (name or "").lower(), (family or "").lower()
+    return "embed" in n or "bert" in f
 
 
 def _ollama_models() -> dict:
@@ -89,10 +145,12 @@ def _ollama_models() -> dict:
     out = []
     for m in data.get("models", []):
         det = m.get("details", {}) or {}
-        out.append({"name": m.get("name"), "family": det.get("family"),
+        name, family = m.get("name"), det.get("family")
+        out.append({"name": name, "family": family,
                     "sizeBytes": m.get("size"), "parameterSize": det.get("parameter_size"),
                     "quantization": det.get("quantization_level"),
-                    "modifiedAt": m.get("modified_at")})
+                    "modifiedAt": m.get("modified_at"),
+                    "chat": not _is_embedding_model(name, family)})
     return {"ok": True, "source": "ollama", "models": out}
 
 
@@ -103,16 +161,35 @@ def _ollama_chat(body: dict) -> tuple[int, dict]:
         return 400, {"ok": False, "error": "model (string) obrigatório"}
     if not isinstance(messages, list) or not messages:
         return 400, {"ok": False, "error": "messages (lista) obrigatório"}
+    if _is_embedding_model(model, ""):
+        return 400, {"ok": False, "error": "modelo de embedding não conversa",
+                     "hint": f"{model} vetoriza texto pro RAG (project_memory_db) — "
+                             "não suporta chat. Escolha um modelo de geração "
+                             "(qwen2.5-coder, llama3.1, deepseek-r1…)."}
     payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
     req = Request(OLLAMA + "/api/chat", data=payload,
                   headers={"Content-Type": "application/json"}, method="POST")
     t0 = time.time()
+    fa.emit("ollama:/api/chat", "execute", "ollama", repo="external", endpoint="/api/chat",
+            label=f"chat → {model}")  # ação do usuário: sempre registra
     try:
         with urlopen(req, timeout=120) as r:
             data = json.loads(r.read())
     except HTTPError as e:
-        return e.code, {"ok": False, "error": f"ollama HTTP {e.code}"}
+        fa.emit("ollama:/api/chat", "error", "ollama", repo="external", status="error",
+                endpoint="/api/chat", label=f"chat {model} HTTP {e.code}")
+        # repassa o MOTIVO do Ollama (ex. "does not support chat") — "HTTP 400"
+        # seco não diz nada pra quem está na tela.
+        detail = ""
+        try:
+            detail = (json.loads(e.read()) or {}).get("error", "")
+        except (OSError, ValueError):
+            pass
+        return e.code, {"ok": False, "error": f"ollama HTTP {e.code}",
+                        **({"detail": detail} if detail else {})}
     except (URLError, OSError) as e:
+        fa.emit("ollama:/api/chat", "error", "ollama", repo="external", status="error",
+                endpoint="/api/chat", label=f"chat {model} indisponível")
         return 503, {"ok": False, "error": "ollama_unreachable", "detail": str(e),
                      "hint": f"Suba o Ollama em {OLLAMA}."}
     msg = data.get("message") or {"role": "assistant", "content": ""}
@@ -131,9 +208,38 @@ _AGENT_META = {
     "gpt-visual": ("Visão", "gpt-4o", ["vision", "judge"]),
 }
 
+# Time canônico do estúdio (líderes) — SEMPRE presente, mesmo sem o state espelhado.
+_CANONICAL_TEAM = [
+    ("interior-pm", "PM Orquestrador"),
+    ("interior-orchestrator", "Team Lead"),
+    ("interior-designer", "Arquiteto"),
+]
+
+
+def _canonical_agents() -> list[dict]:
+    """Fallback quando o state espelhado não dá agentes: mostra o time canônico com
+    status REAL — cada agente fica 'online' se o modelo dele estiver vivo no Ollama."""
+    tags = _ollama_get("/api/tags", timeout=2.0) or {}
+    full = {m.get("name", "") for m in tags.get("models", []) or []}
+    base = {n.split(":")[0] for n in full}
+    out = []
+    for aid, name in _CANONICAL_TEAM:
+        role, model, tools = _AGENT_META.get(aid, (name, None, ["chat"]))
+        ready = bool(model) and (model in full or model.split(":")[0] in base)
+        out.append({"id": aid, "name": name, "role": role, "umbrella": "Interior Studio",
+                    "status": "online" if ready else "idle", "online": ready,
+                    "model": model, "tools": tools,
+                    "message": (f"modelo {model} pronto no Ollama — pode rodar" if ready
+                                else f"modelo {model} ausente no Ollama" if model else None),
+                    "source": "canonical"})
+    return out
+
 
 def _derive_agents(state: dict) -> list[dict]:
     out = []
+    if _gate("derive:agents", 4.0):
+        fa.emit("sketchup-mcp-bff/cockpit_api.py", "execute", "bff", endpoint="/api/agents",
+                label="derive agents (de /api/state)")
     for u in (state.get("agents", {}) or {}).get("umbrellas", []) or []:
         for card in [u.get("lead")] + (u.get("subs") or []):
             if not card:
@@ -150,10 +256,14 @@ def _derive_agents(state: dict) -> list[dict]:
                         "umbrella": u.get("label", ""), "status": st, "model": model,
                         "online": bool(card.get("online")), "tools": tools,
                         "message": None if card.get("message") in (None, "—") else card.get("message")})
-    return out
+    # sem state espelhado (ou sem agentes nele) → time canônico com status real do Ollama
+    return out or _canonical_agents()
 
 
 def _derive_workflows(state: dict) -> list[dict]:
+    if _gate("derive:workflows", 4.0):
+        fa.emit("sketchup-mcp-bff/cockpit_api.py", "execute", "bff", endpoint="/api/workflows",
+                label="derive workflows (de /api/state)")
     ov = (state.get("overview", {}) or {}).get("active_focuses") or [{}]
     pipe = (ov[0] or {}).get("pipeline") or []
     fac = state.get("factory", {}) or {}
@@ -193,8 +303,13 @@ def _derive_workflows(state: dict) -> list[dict]:
 
 def _derive_decisions(state: dict) -> list[dict]:
     out = []
+    if _gate("derive:decisions", 4.0):
+        fa.emit("sketchup-mcp-bff/cockpit_api.py", "execute", "bff", endpoint="/api/decisions",
+                label="derive decisions (propostas + visual review)")
     for p in (state.get("proposals", {}) or {}).get("pending", []) or []:
-        items = ", ".join(i.get("asset", "") for i in (p.get("items") or [])[:4])
+        # items reais podem ser dicts ({asset:...}) OU strings (gaps do Auditor)
+        items = ", ".join(i.get("asset", "") if isinstance(i, dict) else str(i)
+                          for i in (p.get("items") or [])[:4])
         out.append({"id": p.get("id"), "type": "program_proposal",
                     "title": f"Programa · {p.get('room_name', p.get('room_id', ''))}",
                     "question": f"Aprovar o programa proposto ({items})?",
@@ -212,8 +327,15 @@ def _derive_decisions(state: dict) -> list[dict]:
 
 def _derive_artifacts(state: dict) -> list[dict]:
     out = []
+    if _gate("derive:artifacts", 4.0):
+        fa.emit("sketchup-mcp-bff/cockpit_api.py", "execute", "bff", endpoint="/api/artifacts",
+                label="derive artifacts (renders + refpack)")
     for r in (state.get("renders") or [])[:40]:
         name = r.get("name", "")
+        # cada render é um artifact do motor — registra no mapa para aparecer "tocado"
+        if name and _gate("art:" + name, 30.0):
+            fa.emit(f"sketchup-mcp/artifacts/{name}", "read", "bff", repo="sketchup-mcp",
+                    label="artifact render listado")
         out.append({"id": re.sub(r"\W+", "-", name.lower()).strip("-") or name,
                     "type": "render", "name": r.get("sub") or name, "path": name,
                     "url": "/img/" + name, "sizeKb": r.get("kb"),
@@ -228,9 +350,13 @@ def _derive_artifacts(state: dict) -> list[dict]:
 
 
 def _status() -> dict:
-    st = _upstream_state()
+    # `upstream` mantido no SHAPE (types.ts intocado); semântica nova = "motor legível
+    # por ARQUIVO" (ENGINE_ROOT acessível), não mais "GET :8781 respondeu".
     oll = _ollama_get("/api/tags", timeout=2.0)
-    return {"upstream": {"ok": bool(st), "url": UPSTREAM},
+    # ok exige o dado REALMENTE legível (state_view não-vazio, cache 2s) — dir existir com
+    # state {} deixava o badge verde com todos os painéis em branco (dado fabricado).
+    return {"upstream": {"ok": fa.ENGINE_ROOT.is_dir() and bool(_upstream_state()),
+                         "url": str(fa.ENGINE_ROOT)},
             "ollama": {"ok": oll is not None, "url": OLLAMA,
                        "models": len((oll or {}).get("models", []))},
             "time": _now()}
@@ -241,7 +367,7 @@ def _seed_runs():
     global _SEEDED
     if _SEEDED:
         return
-    state = _upstream_state()   # rede FORA do lock
+    state = _upstream_state()   # I/O de arquivo FORA do lock
     claims = (state.get("sessions", {}) or {}).get("claims", []) or []
     with _LOCK:                 # double-checked locking — semeia uma vez só
         if _SEEDED:
@@ -286,6 +412,9 @@ def _start_run(kind: str, **meta) -> str:
            ("agentId", "agentName", "workflowId", "model") if k in meta}}
     with _LOCK:
         RUNS[rid] = run
+    fa.emit("sketchup-mcp-bff/cockpit_api.py", "execute", "runner", run_id=rid,
+            workflow_id=meta.get("workflowId"), agent_id=meta.get("agentId"),
+            label=f"run {kind} criado (runner STUB)", confidence="low", stub=True)
     threading.Thread(target=_runner, args=(rid,), daemon=True).start()
     return rid
 
@@ -324,6 +453,9 @@ def _runner(rid: str):
     run["durationMs"] = int((time.time() - t0) * 1000)
     _log(run, "error" if failed else "success",
          f"run {run['status']} em {run['durationMs']}ms")
+    fa.emit("sketchup-mcp-bff/cockpit_api.py", "error" if failed else "execute", "runner",
+            run_id=rid, status="error" if failed else "ok", confidence="low", stub=True,
+            label=f"run {run['status']} (STUB) em {run['durationMs']}ms")
 
 
 # ── dispatch ─────────────────────────────────────────────────────────────────
@@ -331,10 +463,57 @@ def dispatch(h) -> bool:
     """Tenta tratar uma rota nativa do cockpit. Retorna True se tratou."""
     from urllib.parse import urlparse, parse_qs
     method, path = h.command, urlparse(h.path).path
+    if method == "HEAD":
+        method = "GET"   # HEAD responde pelas mesmas views (h._send suprime o body)
     query = parse_qs(urlparse(h.path).query)
+
+    # Live System Map: rotas /api/file-map/* (inclui o SSE) — antes de tudo.
+    if fa.dispatch(h):
+        return True
+    # instrumenta toda chamada /api/* nativa no timeline (POST sempre; GET throttled)
+    if path.startswith("/api/") and not path.startswith("/api/file-map"):
+        if method != "GET" or _gate(f"req:{method}:{path}", 4.0):
+            fa.emit("sketchup-mcp-bff/cockpit_api.py", "execute", "bff",
+                    endpoint=path, label=f"{method} {path}", status="started")
 
     if method == "GET" and path == "/api/status":
         return _ok(h, _status())
+    # ESTÚDIO por arquivo (studio_mirror) — rotas que antes eram PROXY pro :8781
+    if method == "GET" and path == "/api/state":
+        if _MOCK:
+            fp = _MOCKS_DIR / "state.sample.json"
+            if fp.is_file():
+                if _gate("mock:state", 5.0):
+                    fa.emit("sketchup-mcp-bff/mocks/state.sample.json", "read", "bff",
+                            endpoint="/api/state", label="/api/state servido do MOCK",
+                            confidence="medium", mock=True)
+                h._send(200, fp.read_bytes(), "application/json; charset=utf-8",
+                        {"X-Bff-Source": "mock"})
+                return True
+        return _ok(h, _upstream_state())
+    if method == "GET" and path == "/api/kgraph":
+        return _ok(h, studio.kgraph_view())
+    if method == "GET" and path == "/api/consult/state":
+        try:
+            return _ok(h, studio.consult_view())
+        except Exception as e:  # noqa: BLE001 — paridade com o :8781 (view inteira guardada)
+            return _ok(h, {"error": str(e), "pending_questions": [], "latest_question": None,
+                           "latest_answer": None})
+    if method == "GET" and path == "/api/consult/latest-question":
+        return _ok(h, studio.consult_latest("question"))
+    if method == "GET" and path == "/api/consult/latest-answer":
+        return _ok(h, studio.consult_latest("answer"))
+    if method == "GET" and path.startswith(("/img/", "/inbox-img/")):
+        from urllib.parse import unquote
+        if path.startswith("/img/"):
+            img = studio.render_image(unquote(path[len("/img/"):]))
+        else:
+            img = studio.inbox_image(unquote(path[len("/inbox-img/"):]))
+        if img is None:
+            return _ok(h, {"error": "not_found"}, 404)
+        body, ctype = img
+        h._send(200, body, ctype)
+        return True
     if method == "GET" and path == "/api/models":
         return _ok(h, _ollama_models())
     if method == "POST" and path == "/api/models/chat":
@@ -348,6 +527,44 @@ def dispatch(h) -> bool:
         return _ok(h, {"artifacts": _derive_artifacts(_upstream_state())})
     if method == "GET" and path == "/api/decisions":
         return _ok(h, {"decisions": _derive_decisions(_upstream_state())})
+    # NOC (vidro read-only): runs/ledger REAIS do atuador + saude do lock — lidos de arquivo
+    if method == "GET" and path == "/api/noc/ledger":
+        return _ok(h, noc.ledger_view())
+    if method == "GET" and path == "/api/noc/status":
+        return _ok(h, noc.status_view())
+    # ORACULO/:8765 (vidro read-only): saude GYR + gate-ledger + sessoes + git + skp — de arquivo,
+    # sem tocar no :8765 vivo. E o que torna a pagina UNICA e dispensa o dashboard.html do :8765.
+    if method == "GET" and path == "/api/bridge/health":
+        return _ok(h, bridge.health_view())
+    if method == "GET" and path == "/api/bridge/gate":
+        return _ok(h, bridge.gate_view())
+    if method == "GET" and path == "/api/bridge/sessions":
+        return _ok(h, bridge.sessions_view())
+    if method == "GET" and path == "/api/bridge/git":
+        return _ok(h, bridge.git_view())
+    if method == "GET" and path == "/api/bridge/skp":
+        return _ok(h, bridge.skp_view())
+    if method == "GET" and path == "/api/bridge/gate/stream":
+        return _bridge_gate_stream(h)
+    # CURADORIA (KICKOFF_CURADORIA): corpus julgado por ARQUIVO + human_verdict por CLIQUE
+    if method == "GET" and path == "/api/curation/plants":
+        return _ok(h, curation.plants_view())
+    m = re.match(r"^/api/curation/([^/]+)$", path)
+    if method == "GET" and m:
+        from urllib.parse import unquote
+        return _ok(h, curation.curation_view(unquote(m.group(1))))
+    m = re.match(r"^/api/curation/([^/]+)/verdict$", path)
+    if method == "POST" and m:
+        from urllib.parse import unquote
+        return _curation_verdict(h, unquote(m.group(1)), _body(h))
+    if method == "GET" and path.startswith("/variant-img/"):
+        from urllib.parse import unquote
+        img = curation.variant_image(unquote(path[len("/variant-img/"):]))
+        if img is None:
+            return _ok(h, {"error": "not_found"}, 404)
+        body, ctype = img
+        h._send(200, body, ctype)
+        return True
     if method == "GET" and path == "/api/runs":
         _seed_runs()
         with _LOCK:   # snapshot consistente (RUNS é mutado por _runner/_start_run)
@@ -415,20 +632,112 @@ def _decide(h, did: str, body: dict) -> bool:
     if did not in pending:
         return _ok(h, {"ok": False, "error": "unknown_decision", "id": did}, 404)
     applied = None
-    # decisão de programa → ação real no upstream (/api/proposal); reflete o resultado
+    # decisão de programa → ÚNICA escrita no motor: mover a proposta por ARQUIVO
+    # (.ai_bridge/proposals/pending → approved|rejected), espelho de proposals._move.
     if did != "visual-review":
         action = "approve" if str(choice).lower().startswith("aprov") else \
                  "reject" if str(choice).lower().startswith("rejeit") else None
         if action:
             try:
-                payload = json.dumps({"action": action, "id": did}).encode()
-                req = Request(UPSTREAM + "/api/proposal", data=payload,
-                              headers={"Content-Type": "application/json"}, method="POST")
-                with urlopen(req, timeout=8) as r:
-                    applied = json.loads(r.read())
-            except (URLError, HTTPError, OSError, json.JSONDecodeError) as e:
-                return _ok(h, {"ok": False, "error": "upstream_failed", "detail": str(e)}, 502)
+                moved = studio.decide_proposal(did, action)
+            except OSError as e:   # inclui PermissionError — motor montado read-only (Docker)
+                return _ok(h, {"ok": False, "error": "decision_write_unavailable",
+                               "hint": "motor montado read-only — aprove pelo repo do motor",
+                               "detail": str(e)}, 503)
+            if moved is None:
+                return _ok(h, {"ok": False, "error": "unknown_proposal", "id": did}, 404)
+            applied = {"ok": True, "proposal": moved}   # shape do antigo /api/proposal do :8781
+            _state_cache.update(t=0.0, v=None)          # próximo /api/state já reflete o move
     return _ok(h, {"ok": True, "id": did, "choice": choice, "upstream": applied})
+
+
+def _curation_verdict(h, plant: str, body: dict) -> bool:
+    """POST /api/curation/<plant>/verdict — o CLIQUE do Felipe (única origem legítima
+    de human_verdict; rail do KICKOFF_CURADORIA). Append em human_verdicts.jsonl —
+    o corpus.jsonl do motor nunca é reescrito."""
+    verdict = str((body or {}).get("verdict") or "").upper()
+    variant_id = str((body or {}).get("variant_id") or "")
+    note = str((body or {}).get("note") or "")
+    if verdict not in curation.HUMAN_VERDICTS:
+        return _ok(h, {"ok": False, "error": "invalid_verdict",
+                       "hint": "verdict humano é IMPROVED|SAME|WORSE"}, 400)
+    try:
+        rec = curation.record_human_verdict(plant, variant_id, verdict, note)
+    except OSError as e:   # inclui PermissionError — dado montado read-only
+        return _ok(h, {"ok": False, "error": "verdict_write_unavailable",
+                       "detail": str(e)}, 503)
+    if rec is None:
+        return _ok(h, {"ok": False, "error": "unknown_variant",
+                       "plant": plant, "variant_id": variant_id}, 404)
+    return _ok(h, {"ok": True, "recorded": rec})
+
+
+def _bridge_gate_stream(h) -> bool:
+    """SSE: tail -f do audit.jsonl → cada ACESSO ao gate (consult/heartbeat) ao vivo, igual o feed
+    'Acontecendo agora' mas do ORÁCULO. Emite um 'seed' com a contagem atual, depois só as linhas
+    novas conforme aparecem. Não toca no :8765 — só segue o arquivo."""
+    path = bridge._audit_path()
+    h.send_response(200)
+    h.send_header("Content-Type", "text/event-stream; charset=utf-8")
+    h.send_header("Cache-Control", "no-cache")
+    h.send_header("Connection", "keep-alive")
+    h.send_header("X-Accel-Buffering", "no")
+    h.end_headers()
+    try:
+        seed = bridge.gate_view()
+        h.wfile.write(("event: seed\ndata: " + json.dumps(
+            {"consultCount": seed.get("consultCount", 0),
+             "lastActivityAgeS": seed.get("lastActivityAgeS")}, ensure_ascii=False) + "\n\n").encode())
+        h.wfile.flush()
+    except OSError:
+        return True
+    try:
+        pos = path.stat().st_size if path.exists() else 0
+    except OSError:
+        pos = 0
+    deadline = time.time() + 300
+    ticks = 0
+    try:
+        while time.time() < deadline:
+            emitted = False
+            try:
+                size = path.stat().st_size if path.exists() else 0
+            except OSError:
+                size = 0
+            if size < pos:                      # arquivo rotou/truncou → recomeça do início
+                pos = 0
+            if size > pos:
+                with path.open("rb") as fh:
+                    fh.seek(pos)
+                    chunk = fh.read()
+                    pos = fh.tell()
+                for raw in chunk.decode("utf-8", "replace").splitlines():
+                    if not raw.strip():
+                        continue
+                    try:
+                        d = json.loads(raw)
+                    except ValueError:
+                        continue
+                    ev = {"kind": d.get("kind"), "ts": d.get("t") or d.get("ts")}
+                    if d.get("kind") == "consult":
+                        ev.update({"model": d.get("model"), "tier": d.get("tier"),
+                                   "durSec": bridge._num(d.get("dur_sec")),
+                                   "qChars": bridge._int(d.get("q_chars")),
+                                   "aChars": bridge._int(d.get("a_chars"))})
+                    elif d.get("kind") == "heartbeat":
+                        ev.update({"session": d.get("session_id") or d.get("session"),
+                                   "cycle": d.get("cycle")})
+                    h.wfile.write(("data: " + json.dumps(ev, ensure_ascii=False) + "\n\n").encode())
+                    h.wfile.flush()
+                    emitted = True
+            ticks += 1
+            if not emitted and ticks % 6 == 0:  # heartbeat SSE (detecta desconexão)
+                h.wfile.write(b": keep-alive\n\n")
+                h.wfile.flush()
+            time.sleep(0.5)
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        pass
+    return True
 
 
 def _runs_logs(h, rid: str, query: dict) -> bool:
@@ -470,3 +779,9 @@ def _runs_logs(h, rid: str, query: dict) -> bool:
     except (BrokenPipeError, ConnectionResetError, OSError):
         pass
     return True
+
+
+# Liga o painel "o que está errado?" do Live System Map à saúde motor(arquivo)/ollama.
+fa.set_status_probe(_status)
+# O studio_mirror pergunta o status do Ollama por AQUI (probe injetado — sem import circular).
+studio.set_ollama_probe(_ollama_get)

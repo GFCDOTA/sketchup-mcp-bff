@@ -1,47 +1,49 @@
-"""server.py — BFF fino do INTERIOR STUDIO dashboard (:8782).
+"""server.py — BFF do INTERIOR STUDIO AI Cockpit (:8782).
 
-Serve o frontend premium (estático, em `web/`) e faz PROXY de toda a API / imagens /
-páginas-vitrine para o `studio_dashboard.py` original rodando como UPSTREAM (default
-:8781). Assim a `:8782` continua funcionando com DADOS REAIS, sem tocar no repo de
-origem (`GFCDOTA/sketchup-mcp`).
+Serve o frontend React (build em `frontend/dist`) + os endpoints do cockpit (cockpit_api).
+NÃO há mais proxy: o :8781 deixou de ser dependência — todo o dado do estúdio (o antigo
+/api/state, /api/kgraph, /api/consult/*, /img/* e /inbox-img/*) é respondido pelo PRÓPRIO
+BFF lendo os ARQUIVOS do motor (studio_mirror, padrão bridge_mirror). Um app só, uma porta.
 
-    browser → :8782 (este BFF: web/ estático)
-                 └── proxy /api/* /img/* /inbox-img/* + páginas-vitrine → :8781 (upstream)
+    browser → :8782 (este BFF: frontend/dist + /api/* do cockpit)
+                 └── motor lido por ARQUIVO (fa.ENGINE_ROOT — studio_mirror/bridge_mirror/noc_mirror)
 
 Uso:
-    python server.py                       # serve :8782, proxy → http://127.0.0.1:8781
-    BFF_PORT=8782 BFF_UPSTREAM=http://127.0.0.1:8781 python server.py
-    BFF_MOCK=1 python server.py            # sem upstream: /api/state vem de mocks/
+    cd frontend && npm run build           # gera frontend/dist (uma vez)
+    python server.py                       # serve :8782 lendo o motor por arquivo
+    BFF_PORT=8782 BFF_ENGINE_ROOT=E:\\Claude\\apps\\sketchup-mcp python server.py
+    BFF_MOCK=1 python server.py            # /api/state vem de mocks/ (snapshot capturado)
 
-stdlib only — sem dependências, sem build.
+Nota HEAD: do_HEAD roteia pelo dispatch como GET (o _send suprime o body) — HEAD /api/*
+responde 200 com headers reais, como no proxy antigo. stdlib only — o BFF não tem
+dependências (o build do React é separado, em frontend/).
 """
 from __future__ import annotations
 
 import json
 import os
+import signal
+import time
 import cockpit_api  # endpoints "AI Cockpit" (status/models/agents/runs/...) montados aqui
+import file_activity as fa  # Live System Map — eventos de serve/erro
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent
-WEB = Path(os.environ.get("BFF_WEB", ROOT / "web"))
-MOCKS = ROOT / "mocks"
+WEB = Path(os.environ.get("BFF_WEB", ROOT / "frontend" / "dist"))  # build do React
 PORT = int(os.environ.get("BFF_PORT", "8782"))
-UPSTREAM = os.environ.get("BFF_UPSTREAM", "http://127.0.0.1:8781").rstrip("/")
-MOCK = os.environ.get("BFF_MOCK", "") not in ("", "0", "false", "False")
 
-# Prefixos/paths que NÃO são do frontend — vão para o upstream tal e qual.
-PROXY_PREFIXES = ("/api/", "/img/", "/inbox-img/")
-PROXY_EXACT = {
-    "/api/state", "/api/kgraph", "/api/consult/state",
-    "/api/consult/latest-question", "/api/consult/latest-answer",
-    # páginas servidas pelo dashboard original na mesma porta ("vitrine")
+# Prefixos de API: rota não tratada pelo dispatch → 404 JSON (JAMAIS o index do SPA —
+# /api desconhecido devolvendo HTML seria bug silencioso).
+_API_PREFIXES = ("/api/", "/img/", "/inbox-img/", "/variant-img/")
+# Páginas-vitrine do dashboard legado — RETIRADAS (absorvidas na página única :8782).
+VITRINE_GONE = {
     "/explica", "/grafo", "/fluxo", "/como-funciona",
-    "/agents", "/single-agent", "/multi-agent", "/vitrine",
+    "/single-agent", "/multi-agent", "/vitrine",
 }
+# "/agents" NÃO entra: é rota VIVA do SPA (App.tsx redireciona pra /operacao?tab=agentes) —
+# deep-link/F5 precisa cair no index do React, não em 410.
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
@@ -52,8 +54,16 @@ CONTENT_TYPES = {
 }
 
 
-def _is_proxy(path: str) -> bool:
-    return path in PROXY_EXACT or path.startswith(PROXY_PREFIXES)
+_emit_at: dict[str, float] = {}
+
+
+def _gate(key: str, interval: float) -> bool:
+    """Throttle de instrumentação (assets/imagens recarregam em rajada)."""
+    now = time.time()
+    if now - _emit_at.get(key, 0.0) >= interval:
+        _emit_at[key] = now
+        return True
+    return False
 
 
 class H(BaseHTTPRequestHandler):
@@ -87,82 +97,76 @@ class H(BaseHTTPRequestHandler):
             # SPA usa hash-routing; qualquer rota desconhecida cai no index.
             fp = WEB / "index.html"
             if not fp.is_file():
+                fa.emit("sketchup-mcp-bff/frontend/dist/", "error", "bff", status="error",
+                        label="frontend/dist não buildado")
                 self._send(404, b"web/ not built", "text/plain"); return
         ctype = CONTENT_TYPES.get(fp.suffix.lower(), "application/octet-stream")
         cache = "no-cache" if fp.suffix in (".html",) else "public, max-age=60"
+        try:
+            served = f"sketchup-mcp-bff/frontend/dist/{fp.relative_to(WEB).as_posix()}"
+        except ValueError:
+            served = "sketchup-mcp-bff/frontend/dist/index.html"
+        if _gate(f"serve:{served}", 8.0):
+            fa.emit(served, "serve", "bff", label=f"serve {fp.name} (frontend React)")
         self._send(200, fp.read_bytes(), ctype, {"Cache-Control": cache})
 
-    # ── proxy → upstream ─────────────────────────────────────────────────────
-    def _proxy(self, path: str, method: str) -> None:
-        # modo MOCK: sem upstream, devolve o snapshot capturado.
-        if MOCK and path == "/api/state" and method == "GET":
-            fp = MOCKS / "state.sample.json"
-            if fp.is_file():
-                self._send(200, fp.read_bytes(), "application/json; charset=utf-8",
-                           {"X-Bff-Source": "mock"}); return
-        url = UPSTREAM + path + (("?" + urlparse(self.path).query)
-                                 if urlparse(self.path).query else "")
-        body = None
-        if method == "POST":
-            length = int(self.headers.get("Content-Length", 0) or 0)
-            if length > cockpit_api.MAX_BODY:   # teto de corpo (anti-DoS)
-                self._json(413, {"error": "payload_too_large"})
-                return
-            body = self.rfile.read(length) if length else b""
-        req = Request(url, data=body, method=method)
-        if self.headers.get("Content-Type"):
-            req.add_header("Content-Type", self.headers["Content-Type"])
-        try:
-            with urlopen(req, timeout=30) as r:
-                payload = r.read()
-                ctype = r.headers.get("Content-Type", "application/octet-stream")
-                self._send(r.status, payload, ctype, {"X-Bff-Source": "upstream"})
-        except HTTPError as e:  # upstream respondeu erro — repassa
-            self._send(e.code, e.read() or b"", e.headers.get("Content-Type", "text/plain"))
-        except (URLError, OSError) as e:  # upstream fora do ar
-            self._json(502, {"error": "upstream_unreachable", "upstream": UPSTREAM,
-                             "detail": str(e), "hint":
-                             "suba o dashboard original: "
-                             "python sketchup-mcp/tools/studio_dashboard.py --port 8781"})
-
     # ── verbs ────────────────────────────────────────────────────────────────
+    def _not_handled(self, path: str) -> bool:
+        """Trata os caminhos NÃO-frontend depois do dispatch: vitrine retirada → 410;
+        /api|/img desconhecido → 404 JSON. Devolve True se respondeu."""
+        if path in VITRINE_GONE:
+            self._send(410, "absorvido na pagina unica :8782".encode(), "text/plain; charset=utf-8")
+            return True
+        if path.startswith(_API_PREFIXES):
+            self._json(404, {"error": "unknown_endpoint", "path": path})
+            return True
+        return False
+
     def do_GET(self):
-        if cockpit_api.dispatch(self):   # rotas nativas do cockpit (antes do proxy)
+        if cockpit_api.dispatch(self):   # rotas nativas do cockpit
             return
         path = urlparse(self.path).path
-        if _is_proxy(path):
-            self._proxy(path, "GET")
-        else:
+        if not self._not_handled(path):
             self._serve_static(path)
 
     def do_HEAD(self):
+        # HEAD roteia pelas MESMAS views do GET (dispatch normaliza; _send suprime o body) —
+        # paridade com o proxy antigo, onde HEAD /api/* respondia 200 com headers reais.
+        if cockpit_api.dispatch(self):
+            return
         path = urlparse(self.path).path
-        if _is_proxy(path):
-            self._proxy(path, "GET")
-        else:
+        if not self._not_handled(path):
             self._serve_static(path)
 
     def do_POST(self):
-        if cockpit_api.dispatch(self):   # rotas nativas do cockpit (antes do proxy)
+        if cockpit_api.dispatch(self):   # rotas nativas do cockpit
             return
         path = urlparse(self.path).path
-        if _is_proxy(path):
-            self._proxy(path, "POST")
-        else:
+        if not self._not_handled(path):
             self._send(404, b"not found", "text/plain")
 
 
 def main() -> int:
     if not (WEB / "index.html").is_file():
-        print(f"[bff] AVISO: {WEB/'index.html'} não encontrado — rode da raiz do repo.")
+        print(f"[bff] AVISO: {WEB/'index.html'} não existe — rode `npm run build` em frontend/ primeiro.")
     host = os.environ.get("BFF_HOST", "127.0.0.1")   # localhost por padrão (não expõe na LAN)
     srv = ThreadingHTTPServer((host, PORT), H)
     print(f"INTERIOR STUDIO BFF  ->  http://{host}:{PORT}/")
-    print(f"  upstream (proxy /api/*) -> {UPSTREAM}" + ("   [MOCK ON]" if MOCK else ""))
+    print(f"  motor lido por ARQUIVO (studio_mirror) -> {fa.ENGINE_ROOT}"
+          + ("   [MOCK ON]" if cockpit_api._MOCK else ""))
     print(f"  servindo estatico de    -> {WEB}")
+
+    # `docker stop` / `compose down` enviam SIGTERM. Como PID 1 num container o Python
+    # não tem o default terminate-on-SIGTERM, então tratamos: SIGTERM vira o MESMO
+    # caminho de shutdown limpo do Ctrl-C (SIGINT) — sem esperar os 10s de grace.
+    def _term(*_):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _term)
+
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
+        print("[bff] shutdown")
         srv.shutdown()
     return 0
 

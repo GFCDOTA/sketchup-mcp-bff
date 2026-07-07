@@ -32,6 +32,14 @@ const config: Config = {
         orange: "hsl(var(--orange) / <alpha-value>)",
         surface: "hsl(var(--surface) / <alpha-value>)",
         "surface-2": "hsl(var(--surface-2) / <alpha-value>)",
+        sidebar: {
+          DEFAULT: "hsl(var(--sidebar) / <alpha-value>)",
+          foreground: "hsl(var(--sidebar-foreground) / <alpha-value>)",
+        },
+        header: {
+          DEFAULT: "hsl(var(--header) / <alpha-value>)",
+          foreground: "hsl(var(--header-foreground) / <alpha-value>)",
+        },
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "sans-serif"],

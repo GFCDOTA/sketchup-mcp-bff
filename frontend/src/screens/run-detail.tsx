@@ -69,7 +69,7 @@ export default function RunDetail() {
                 <Card>
                   <CardHeader><CardTitle>Inputs</CardTitle></CardHeader>
                   <CardContent>
-                    <pre className="overflow-x-auto rounded-md border border-border bg-[#0a0b0e] p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
+                    <pre className="overflow-x-auto rounded-md border border-border bg-popover p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
                       {JSON.stringify(run.inputs, null, 2)}
                     </pre>
                   </CardContent>
@@ -80,7 +80,7 @@ export default function RunDetail() {
                 <Card>
                   <CardHeader><CardTitle>Outputs</CardTitle></CardHeader>
                   <CardContent>
-                    <pre className="overflow-x-auto rounded-md border border-border bg-[#0a0b0e] p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
+                    <pre className="overflow-x-auto rounded-md border border-border bg-popover p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
                       {JSON.stringify(run.outputs, null, 2)}
                     </pre>
                   </CardContent>

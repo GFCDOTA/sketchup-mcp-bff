@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Cpu, Send, Sparkles } from "lucide-react";
 import { useModels, useChat } from "@/api/hooks";
 import type { ModelInfo } from "@/api/types";
-import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +14,8 @@ function fmtSize(bytes?: number) {
   return `${(bytes / 1e9).toFixed(1)} GB`;
 }
 
-export default function Models() {
+/** Corpo da aba "Modelos" da tela Operação (sem header próprio). */
+export function ModelsPanel() {
   const { data, isLoading, isError, error } = useModels();
   const chat = useChat();
   const [selected, setSelected] = useState<string>("");
@@ -23,28 +23,29 @@ export default function Models() {
 
   const models = data?.models ?? [];
   useEffect(() => {
-    if (!selected && models.length) setSelected(models[0].name);
+    // default = primeiro modelo que CONVERSA (embedding dá 400 no /api/chat)
+    if (!selected && models.length) setSelected((models.find((m) => m.chat !== false) ?? models[0]).name);
   }, [models, selected]);
 
+  const selectedModel = models.find((m) => m.name === selected);
+  const selectedIsEmbedding = selectedModel?.chat === false;
+
   const send = () => {
-    if (!selected || !prompt.trim()) return;
+    if (!selected || !prompt.trim() || selectedIsEmbedding) return;
     chat.mutate({ model: selected, messages: [{ role: "user", content: prompt }] });
   };
 
-  return (
-    <>
-      <PageHeader title="Modelos locais" subtitle="Modelos do Ollama via BFF — o frontend nunca chama o Ollama direto" />
+  if (isError) return <ErrorState message={error?.message} />;
+  if (isLoading) return <LoadingState label="Consultando Ollama…" />;
+  if (data?.source === "none")
+    return (
+      <Card>
+        <EmptyState icon={Cpu} title="Ollama offline" sub={data.hint ?? "Suba o Ollama (ollama serve) para listar e testar modelos."} />
+      </Card>
+    );
 
-      {isError ? (
-        <ErrorState message={error?.message} />
-      ) : isLoading ? (
-        <LoadingState label="Consultando Ollama…" />
-      ) : data?.source === "none" ? (
-        <Card>
-          <EmptyState icon={Cpu} title="Ollama offline" sub={data.hint ?? "Suba o Ollama (ollama serve) para listar e testar modelos."} />
-        </Card>
-      ) : (
-        <div className="grid grid-cols-12 gap-4">
+  return (
+    <div className="grid grid-cols-12 gap-4">
           <Card className="col-span-12 lg:col-span-5">
             <CardHeader><CardTitle className="flex items-center gap-2"><Cpu className="size-4 text-muted-foreground" /> {models.length} modelos</CardTitle></CardHeader>
             <CardContent className="space-y-2">
@@ -61,8 +62,15 @@ export default function Models() {
             </CardHeader>
             <CardContent className="space-y-3">
               <Textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4} placeholder="Digite um prompt…" />
+              {selectedIsEmbedding && (
+                <div className="rounded-md border border-warn/30 bg-warn/[0.06] p-2.5 text-xs text-muted-foreground">
+                  <code className="text-foreground/80">{selected}</code> é um modelo de <b>embedding</b> — ele
+                  vetoriza texto pro RAG (banco de memória do projeto), não conversa. Escolha um modelo de
+                  geração ao lado (qwen2.5-coder, llama3.1, deepseek-r1…).
+                </div>
+              )}
               <div className="flex items-center gap-2">
-                <Button variant="primary" size="sm" onClick={send} disabled={chat.isPending || !selected}>
+                <Button variant="primary" size="sm" onClick={send} disabled={chat.isPending || !selected || selectedIsEmbedding}>
                   <Send className="size-3.5" /> {chat.isPending ? "Gerando…" : "Enviar"}
                 </Button>
                 {chat.data && <span className="text-xs text-muted-foreground">{chat.data.tookMs} ms</span>}
@@ -78,8 +86,6 @@ export default function Models() {
             </CardContent>
           </Card>
         </div>
-      )}
-    </>
   );
 }
 
@@ -94,7 +100,10 @@ function ModelRow({ m, active, onClick }: { m: ModelInfo; active: boolean; onCli
     >
       <Cpu className={cn("size-4", active ? "text-primary" : "text-muted-foreground/60")} />
       <div className="min-w-0 flex-1">
-        <div className="truncate font-mono text-sm">{m.name}</div>
+        <div className="flex items-center gap-2">
+          <span className="truncate font-mono text-sm">{m.name}</span>
+          {m.chat === false && <Badge variant="outline" className="shrink-0 text-[10px]">embedding · sem chat</Badge>}
+        </div>
         <div className="text-[11px] text-muted-foreground/60">
           {[m.parameterSize, m.quantization, fmtSize(m.sizeBytes)].filter(Boolean).join(" · ")}
         </div>

@@ -1,12 +1,10 @@
 import { Command } from "cmdk";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, ExternalLink, Search } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 import { NAV } from "@/config/nav";
 import { useUi } from "@/store/ui";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-
-const BFF = import.meta.env.VITE_BFF_URL ?? "";
 
 export function CommandPalette() {
   const open = useUi((s) => s.cmdkOpen);
@@ -63,14 +61,6 @@ export function CommandPalette() {
               >
                 <RefreshCw className="size-4 text-muted-foreground/60" />
                 Atualizar dados
-              </Command.Item>
-              <Command.Item
-                value="Abrir Explica Mapa Fluxo"
-                onSelect={() => go(() => window.open(`${BFF}/explica`, "_blank"))}
-                className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2.5 text-sm text-muted-foreground aria-selected:bg-secondary aria-selected:text-foreground"
-              >
-                <ExternalLink className="size-4 text-muted-foreground/60" />
-                Abrir Explica / Mapa / Fluxo
               </Command.Item>
             </Command.Group>
           </Command.List>

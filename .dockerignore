@@ -1,0 +1,16 @@
+# Mantém a fonte (server.py, frontend/src, mocks) no contexto; corta o peso.
+.git
+**/node_modules
+frontend/dist
+.venv
+venv
+**/__pycache__
+*.pyc
+.file_map_marks.json
+.scratch
+*.log
+.env
+.env.*
+*.local
+.DS_Store
+Thumbs.db

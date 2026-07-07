@@ -12,3 +12,6 @@ Thumbs.db
 # Local scratch
 .scratch/
 *.local
+
+# Live System Map — marks manuais (protected/legacy/stale) persistidos localmente
+.file_map_marks.json

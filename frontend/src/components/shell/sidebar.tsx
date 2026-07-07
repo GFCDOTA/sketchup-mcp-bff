@@ -1,31 +1,32 @@
 import { NavLink } from "react-router-dom";
-import { Boxes, ExternalLink } from "lucide-react";
+import { Boxes } from "lucide-react";
 import { NAV } from "@/config/nav";
-import { useRuns, useDecisions } from "@/api/hooks";
+import { useRuns, useDecisions, useCuration } from "@/api/hooks";
+import { DEFAULT_PLANT } from "@/api/client";
 import { useUi } from "@/store/ui";
 import { cn } from "@/lib/utils";
-
-const BFF = import.meta.env.VITE_BFF_URL ?? "";
 
 export function Sidebar() {
   const { data: runs } = useRuns();
   const { data: decisions } = useDecisions();
+  const { data: curation } = useCuration(DEFAULT_PLANT);
   const setOpen = useUi((s) => s.setSidebarOpen);
 
   const badges: Record<string, number> = {
     runs: (runs?.runs ?? []).filter((r) => r.status === "running").length,
     decisions: (decisions?.decisions ?? []).filter((d) => d.status === "pending").length,
+    curation: curation?.awaiting_human ?? 0,
   };
 
   return (
-    <aside className="flex h-full flex-col border-r border-border bg-gradient-to-b from-[#0c0d10] to-background">
+    <aside className="flex h-full flex-col border-r border-border bg-sidebar text-sidebar-foreground">
       <div className="flex h-14 items-center gap-3 border-b border-border px-4">
         <span className="grid size-8 place-items-center rounded-md bg-gradient-to-br from-primary to-primary/50 text-primary-foreground shadow-glow">
           <Boxes className="size-4" />
         </span>
         <div className="leading-tight">
           <div className="text-sm font-bold tracking-tight">
-            <span className="bg-gradient-to-r from-white to-primary bg-clip-text text-transparent">INTERIOR</span> COCKPIT
+            <span className="bg-gradient-to-r from-foreground to-primary bg-clip-text text-transparent">INTERIOR</span> COCKPIT
           </div>
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground/50">AI devtool</div>
         </div>
@@ -77,16 +78,10 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <div className="border-t border-border p-2">
-        <a
-          href={`${BFF}/explica`}
-          target="_blank"
-          rel="noopener"
-          className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-        >
-          <ExternalLink className="size-[17px] text-muted-foreground/70" />
-          Explica · Mapa · Fluxo
-        </a>
+      <div className="border-t border-border p-3">
+        <div className="px-1 text-[10.5px] text-muted-foreground/40">
+          Interior Studio · AI Cockpit
+        </div>
       </div>
     </aside>
   );

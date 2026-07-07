@@ -1,44 +1,43 @@
 import { Link, useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
 import { Workflow as WorkflowIcon, Play, ArrowRight, AlertTriangle, Wrench } from "lucide-react";
 import { useWorkflows, useRunWorkflow } from "@/api/hooks";
 import type { Workflow } from "@/api/types";
-import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardEyebrow } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Pipeline } from "@/components/pipeline";
 import { EmptyState, ErrorState } from "@/components/states";
 import { SkeletonText } from "@/components/ui/skeleton";
+import { staggerContainer, staggerItem } from "@/components/flow/animated-section";
 
-export default function Workflows() {
+/** Corpo da aba "Workflows" da tela Operação (sem header próprio). */
+export function WorkflowsPanel() {
   const { data, isLoading, isError, error } = useWorkflows();
   const runWf = useRunWorkflow();
   const navigate = useNavigate();
 
+  if (isError) return <ErrorState message={error?.message} />;
+  if (isLoading)
+    return (
+      <div className="grid gap-4 lg:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, i) => <Card key={i} className="p-4"><SkeletonText lines={6} /></Card>)}
+      </div>
+    );
+  if ((data?.workflows ?? []).length === 0) return <EmptyState icon={WorkflowIcon} title="Sem workflows" />;
+
   return (
-    <>
-      <PageHeader title="Workflows & Recipes" subtitle="Pipelines reproduzíveis — quando usar, inputs, outputs, ferramentas e riscos" />
-      {isError ? (
-        <ErrorState message={error?.message} />
-      ) : isLoading ? (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {Array.from({ length: 2 }).map((_, i) => <Card key={i} className="p-4"><SkeletonText lines={6} /></Card>)}
-        </div>
-      ) : (data?.workflows ?? []).length === 0 ? (
-        <EmptyState icon={WorkflowIcon} title="Sem workflows" />
-      ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {data!.workflows.map((w) => (
-            <WorkflowCard
-              key={w.id}
-              wf={w}
-              onRun={() => runWf.mutate(w.id, { onSuccess: (r) => r.runId && navigate(`/runs/${r.runId}`) })}
-              running={runWf.isPending && runWf.variables === w.id}
-            />
-          ))}
-        </div>
-      )}
-    </>
+    <motion.div variants={staggerContainer} initial="hidden" animate="show" className="grid gap-4 lg:grid-cols-2">
+      {data!.workflows.map((w) => (
+        <motion.div key={w.id} variants={staggerItem}>
+          <WorkflowCard
+            wf={w}
+            onRun={() => runWf.mutate(w.id, { onSuccess: (r) => r.runId && navigate(`/runs/${r.runId}`) })}
+            running={runWf.isPending && runWf.variables === w.id}
+          />
+        </motion.div>
+      ))}
+    </motion.div>
   );
 }
 

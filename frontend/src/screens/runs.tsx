@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { Activity, ChevronRight } from "lucide-react";
 import { useRuns } from "@/api/hooks";
 import type { RunStatus } from "@/api/types";
-import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusPill } from "@/components/ui/status-pill";
@@ -24,7 +23,8 @@ function fmtDur(ms?: number) {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-export default function Runs() {
+/** Corpo da aba "Runs" da tela Operação (sem header próprio; filtro inline). */
+export function RunsPanel() {
   const { data, isLoading, isError, error } = useRuns();
   const [filter, setFilter] = useState("all");
   const navigate = useNavigate();
@@ -32,20 +32,16 @@ export default function Runs() {
   const runs = (data?.runs ?? []).filter((r) => filter === "all" || r.status === (filter as RunStatus));
 
   return (
-    <>
-      <PageHeader
-        title="Runs"
-        subtitle="Histórico de execuções de agentes e workflows"
-        actions={
-          <Tabs value={filter} onValueChange={setFilter}>
-            <TabsList>
-              {FILTERS.map((f) => (
-                <TabsTrigger key={f.key} value={f.key}>{f.label}</TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-        }
-      />
+    <div className="space-y-3">
+      <div className="flex justify-end">
+        <Tabs value={filter} onValueChange={setFilter}>
+          <TabsList>
+            {FILTERS.map((f) => (
+              <TabsTrigger key={f.key} value={f.key}>{f.label}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </div>
 
       {isError ? (
         <ErrorState message={error?.message} />
@@ -80,6 +76,6 @@ export default function Runs() {
           </div>
         </Card>
       )}
-    </>
+    </div>
   );
 }

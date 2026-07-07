@@ -1,3 +1,4 @@
+import { motion } from "framer-motion";
 import { Inbox, CheckCircle2, MessageSquare } from "lucide-react";
 import { useDecisions, useRespondDecision } from "@/api/hooks";
 import type { Decision } from "@/api/types";
@@ -8,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { StatusPill } from "@/components/ui/status-pill";
 import { EmptyState, ErrorState } from "@/components/states";
 import { SkeletonText } from "@/components/ui/skeleton";
+import { staggerContainer, staggerItem } from "@/components/flow/animated-section";
 
 export default function Decisions() {
   const { data, isLoading, isError, error } = useDecisions();
@@ -29,16 +31,17 @@ export default function Decisions() {
       ) : (
         <div className="space-y-6">
           {pending.length > 0 && (
-            <div className="space-y-3">
+            <motion.div variants={staggerContainer} initial="hidden" animate="show" className="space-y-3">
               {pending.map((d) => (
-                <DecisionCard
-                  key={d.id}
-                  d={d}
-                  onRespond={(choice) => respond.mutate({ id: d.id, choice })}
-                  busy={respond.isPending && respond.variables?.id === d.id}
-                />
+                <motion.div key={d.id} variants={staggerItem}>
+                  <DecisionCard
+                    d={d}
+                    onRespond={(choice) => respond.mutate({ id: d.id, choice })}
+                    busy={respond.isPending && respond.variables?.id === d.id}
+                  />
+                </motion.div>
               ))}
-            </div>
+            </motion.div>
           )}
 
           {answered.length > 0 && (

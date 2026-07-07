@@ -1,0 +1,37 @@
+# INTERIOR STUDIO — AI Cockpit BFF no Docker: UM serviço só (o bff), reiniciando sozinho.
+#
+#   docker compose up -d --build            # sobe só o bff(:8782)
+#   abrir  http://localhost:8782/
+#
+#   browser → :8782  bff (frontend/dist + /api/* do cockpit)
+#        ├── /api/* e /img/*  → respondidos pelo PRÓPRIO bff lendo /repos/sketchup-mcp (:ro)
+#        │                      (studio_mirror — o :8781 NÃO é mais dependência)
+#        ├── /api/models /api/models/chat → host.docker.internal:11434  (Ollama do HOST)
+#        └── Live System Map scanner  → /repos/sketchup-mcp  (motor montado READ-ONLY)
+#
+# Decisões (aprovar/rejeitar proposta) são a ÚNICA escrita no motor — com o mount :ro
+# elas degradam 503 honesto no container (no host funcionam). Sem motor montado, use
+# BFF_MOCK=1 para o snapshot capturado.
+services:
+  # BFF + frontend React (:8782) — o cockpit que o humano abre. Único serviço default.
+  bff:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: interior-studio-bff
+    container_name: interior-studio-bff
+    init: true                                          # PID1 limpo (forward/​reaping de sinais)
+    ports:
+      - "8782:8782"
+    environment:
+      BFF_HOST: "0.0.0.0"
+      BFF_MOCK: "${BFF_MOCK:-0}"                         # 1 = serve mocks/state.sample.json
+      BFF_OLLAMA: "http://host.docker.internal:11434"    # Ollama do HOST
+      BFF_ENGINE_ROOT: "/repos/sketchup-mcp"             # studio_mirror + Live System Map leem daqui
+    volumes:
+      # motor READ-ONLY — studio_mirror/scanner leem a árvore real do repo; a única
+      # escrita possível (decisão de proposta) degrada 503 honesto com :ro.
+      - ../sketchup-mcp:/repos/sketchup-mcp:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

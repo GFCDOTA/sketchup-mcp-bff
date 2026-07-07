@@ -37,6 +37,17 @@
     --surface: 225 11% 9%;
     --surface-2: 225 10% 12%;
     --faint: 222 8% 46%;
+
+    /* tokens themeáveis (sobrescritos por tema via applyTheme) */
+    --sidebar: 222 16% 4%;
+    --sidebar-foreground: 222 12% 84%;
+    --header: 222 16% 5%;
+    --header-foreground: 222 16% 92%;
+    --glow: 0 0 18px rgba(108, 168, 255, 0.32);
+    --shadow: 0 8px 28px -8px rgba(0, 0, 0, 0.7);
+    --grid: rgba(255, 255, 255, 0.035);
+    --gradient-start: #1e3a8a;
+    --gradient-end: #4c1d95;
   }
 
   * {
@@ -44,15 +55,54 @@
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
-    background-image:
-      radial-gradient(1200px 620px at 8% -10%, hsl(265 20% 12% / 0.55) 0%, transparent 55%),
-      radial-gradient(1000px 560px at 100% 0%, hsl(210 30% 12% / 0.5) 0%, transparent 50%);
-    background-attachment: fixed;
     min-height: 100vh;
   }
   ::selection {
-    background: hsl(var(--gold) / 0.3);
-    color: #fff;
+    background: hsl(var(--primary) / 0.3);
+    color: hsl(var(--foreground));
+  }
+}
+
+/* ── fundos por tema (data-bg) — overlay fixo atrás do app ──────────────────── */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+html[data-bg="glow"] body::before,
+html[data-bg="mesh"] body::before,
+html[data-bg="glass"] body::before {
+  background:
+    radial-gradient(1100px 560px at 8% -8%, var(--gradient-start), transparent 55%),
+    radial-gradient(900px 520px at 100% 0%, var(--gradient-end), transparent 50%);
+  opacity: 0.33;
+}
+html[data-bg="grid"] body::before {
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 42px 42px;
+}
+html[data-bg="dots"] body::before {
+  background-image: radial-gradient(var(--grid) 1.2px, transparent 1.2px);
+  background-size: 22px 22px;
+}
+
+/* ── transição suave ao trocar de tema (só durante a troca) ─────────────────── */
+.theme-transition,
+.theme-transition *,
+.theme-transition *::before,
+.theme-transition *::after {
+  transition:
+    background-color 0.35s ease, border-color 0.35s ease, color 0.35s ease,
+    fill 0.35s ease, box-shadow 0.35s ease, opacity 0.35s ease !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .theme-transition,
+  .theme-transition * {
+    transition: none !important;
   }
 }
 

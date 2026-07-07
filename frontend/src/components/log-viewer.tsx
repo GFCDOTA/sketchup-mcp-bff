@@ -33,7 +33,7 @@ export function LogViewer({
     <div
       ref={ref}
       className={cn(
-        "max-h-[460px] overflow-auto rounded-md border border-border bg-[#0a0b0e] font-mono text-xs leading-relaxed",
+        "max-h-[460px] overflow-auto rounded-md border border-border bg-popover font-mono text-xs leading-relaxed",
         className,
       )}
     >

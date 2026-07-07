@@ -1,93 +1,141 @@
-# sketchup-mcp-bff — Interior Studio cockpit
+# sketchup-mcp-bff — Interior Studio AI Cockpit
 
-Frontend premium (e BFF fino) para o **dashboard ao vivo do Interior Studio** que roda em
-`http://localhost:8782/` — o cockpit multi-agente do projeto `sketchup-mcp`
-(PM · Team Lead · Arquiteto, ciclos, reference packs, kanban, renders).
-
-Este repositório **não substitui** a lógica do estúdio: ele redesenha a interface e
-serve como **Backend-For-Frontend**, fazendo *proxy* da API que o `studio_dashboard.py`
-original já expõe. Domínio preservado, dados reais, visual de devtool premium.
+**AI Cockpit** (React + TypeScript) + **BFF** (Python) para operar o Interior Studio do
+projeto `sketchup-mcp` — o estúdio multi-agente que gera `.skp` fiéis a plantas de PDF e
+mobília/renderiza ambientes. Um app só, numa porta só: `http://localhost:8782/`.
 
 ```
-browser ──▶ :8782  (sketchup-mcp-bff: server.py + web/)
-                 └── proxy /api/* /img/* + páginas-vitrine ──▶ :8781 (studio_dashboard.py)
+browser ──▶ :8782  (BFF: serve frontend/dist + /api/* do cockpit)
+                 ├── Ollama :11434          (modelos locais — models, chat)
+                 ├── runner                 (runs + logs ao vivo via SSE)
+                 └── ARQUIVOS do motor      (studio_mirror lê o repo sketchup-mcp direto —
+                                             /api/state, /api/kgraph, /api/consult/*, /img/*)
 ```
 
-> **Dois frontends, um BFF.** Há duas UIs neste repo, lado a lado:
-> - **`web/`** — cockpit vanilla (zero-build), servido direto pelo BFF na `:8782`.
-> - **`frontend/`** — **AI Cockpit em React + TypeScript** (Vite, Tailwind, Radix, TanStack Query),
->   com agentes, runs, **logs ao vivo (SSE)**, workflows, modelos locais (Ollama) e decisões.
->   Ver [`frontend/README.md`](frontend/README.md). O BFF ganhou endpoints próprios
->   (`/api/status`, `/api/models`, `/api/agents`, `/api/runs`, `/api/workflows`, …) em
->   [`cockpit_api.py`](cockpit_api.py) — o frontend nunca fala com Ollama/agents direto, só com `/api/*`.
-
-## Por que um BFF
-
-O código do dashboard vive no repositório `GFCDOTA/sketchup-mcp` (que este projeto **não
-toca**). Para melhorar a UI sem alterar aquele repo, o frontend novo vive aqui e consome a
-API por HTTP. O servidor original passa a ser apenas a fonte de dados (upstream).
+> **Arquitetura:** o frontend fala **só** com `/api/*`. Quem conversa com modelos locais,
+> lê os arquivos do motor e roda o runner de agents é o **BFF** ([`cockpit_api.py`](cockpit_api.py))
+> — nunca o React. **`:8781` não é mais dependência**: todo dado do estúdio é respondido pelo
+> próprio BFF lendo o repo do motor por ARQUIVO ([`studio_mirror.py`](studio_mirror.py), padrão
+> `bridge_mirror`). O código do estúdio vive em `GFCDOTA/sketchup-mcp` (não é tocado aqui).
 
 ## Como rodar
 
-Pré-requisito: Python 3.10+ (stdlib apenas — **sem dependências, sem build**).
+### Docker (recomendado — um comando, assim como o `sketchup-mcp`)
+
+Pré-requisito: **Docker** (Desktop). Igual o motor dockeriza só a sua dashboard, aqui o
+compose dockeriza só o **bff** — que builda o React em imagem e reinicia sozinho.
 
 ```bash
-# 1) suba o dashboard original como UPSTREAM (fonte de dados) numa porta separada
-python /caminho/para/sketchup-mcp/tools/studio_dashboard.py --port 8781
+docker compose up -d --build      # builda o React + sobe o bff(:8782)
+#  -> http://localhost:8782/
+docker compose logs -f bff        # acompanhar
+docker compose down               # parar
+```
 
-# 2) suba o BFF (serve a UI nova na 8782 e faz proxy pro upstream)
+O **bff** (`:8782`) serve o frontend React + `/api/*`, fala com o **Ollama do host**
+(`:11434`) e responde `/api/state` + imagens **lendo o repo do motor** montado **read-only**
+em `/repos/sketchup-mcp` (studio_mirror + Live System Map). Não há mais serviço `upstream`
+nem `BFF_UPSTREAM` — dados ao vivo = motor montado; sem motor, rode em mock:
+
+```bash
+docker build -t interior-studio-bff .                          # builda a imagem primeiro
+docker run --rm -p 8782:8782 -e BFF_MOCK=1 interior-studio-bff # cockpit standalone (snapshot)
+```
+
+> ⚠️ Com o mount `:ro`, a **única escrita** do cockpit no motor (aprovar/rejeitar proposta)
+> degrada com `503` honesto — no host ela funciona (move o JSON em `.ai_bridge/proposals/`).
+
+Topologia e troubleshooting em [`docs/DOCKER.md`](docs/DOCKER.md).
+
+### Manual (sem Docker)
+
+Pré-requisitos: **Python 3.10+** (BFF, stdlib) e **Node 18+** (build do React).
+
+```bash
+# 1) build do React (uma vez; gera frontend/dist)
+cd frontend && npm install && npm run build && cd ..
+
+# 2) BFF — serve o cockpit + API na 8782 (lê o motor por ARQUIVO; sem :8781)
 python server.py
 # -> http://127.0.0.1:8782/
 ```
 
-### Configuração (variáveis de ambiente)
+> O BFF acha o motor pelo `BFF_ENGINE_ROOT` (default: pasta irmã `../sketchup-mcp`).
+> Rodando de uma worktree, exporte `BFF_ENGINE_ROOT` explicitamente — senão todos os
+> painéis do estúdio degradam pra vazio (honesto, mas inútil).
+
+Desenvolvimento do frontend (HMR, opcional): `cd frontend && npm run dev` (`:5173`, faz
+proxy de `/api` pro BFF). Ver [`frontend/README.md`](frontend/README.md).
+
+### Variáveis de ambiente (BFF)
 
 | var | default | descrição |
 |---|---|---|
+| `BFF_HOST` | `127.0.0.1` | bind (localhost por padrão — não expõe na LAN) |
 | `BFF_PORT` | `8782` | porta do BFF |
-| `BFF_UPSTREAM` | `http://127.0.0.1:8781` | dashboard original (proxy de `/api/*`) |
-| `BFF_WEB` | `./web` | diretório do frontend estático |
-| `BFF_MOCK` | *(off)* | `1` serve `mocks/state.sample.json` em `/api/state` sem upstream |
+| `BFF_OLLAMA` | `http://127.0.0.1:11434` | Ollama (modelos locais) |
+| `BFF_WEB` | `./frontend/dist` | diretório do build React servido |
+| `BFF_MOCK` | *(off)* | `1` serve `mocks/state.sample.json` em `/api/state` (sem motor) |
+| `BFF_ENGINE_ROOT` | `../sketchup-mcp` | **repo do motor que o studio_mirror LÊ** (fonte de /api/state, imagens, kgraph, consult) + Live System Map |
+| `BFF_SCAN_ROOT` | *(dir do módulo)* | repo do BFF a escanear (separa "o que roda" de "o que se mapeia") |
+| `BFF_MARKS_FILE` | `./.file_map_marks.json` | onde persistir marks manuais (protected/legacy/stale) do mapa |
 
-**Modo offline / só visual** (sem o upstream rodando):
+### O que ainda é vivo (fora arquivo)
 
-```bash
-BFF_MOCK=1 python server.py    # /api/state vem do snapshot em mocks/
-```
+- **Ollama `:11434`** — status/chat dos modelos locais (sob demanda; off ⇒ agentes `online=false`, honesto).
+- **A ÚNICA escrita no motor** = mover proposta `pending → approved|rejected` quando você decide
+  no painel Decisões (`.ai_bridge/proposals/`). Com o motor montado read-only (Docker), degrada `503`.
+- Ações LLM do dashboard legado (`propose`/`audit` de proposta) **não existem** no cockpit —
+  sem arquivo-fonte, sem fabricação (o React nunca as chamou).
 
 ## Estrutura
 
 ```
-server.py                 BFF: serve web/ + proxy /api/* -> upstream  (stdlib)
-web/
-  index.html              app shell (carrega CSS/JS)
-  favicon.svg
-  assets/css/
-    tokens.css            design tokens (cor · spacing · radius · sombra · type)
-    base.css              reset + estados (loading/empty/error)
-    components.css        cards · pills · badges · buttons · tabs · logs · timeline
-    layout.css            app shell: sidebar · topbar · grid · command palette
-    views.css             composições das telas
-  assets/js/
-    icons.js              set de ícones SVG (substitui emojis)
-    api.js                cliente /api/state + store com polling
-    ui.js                 primitivos (pill, badge, metric, card, pipeline, estados)
-    app.js                shell + hash-router + command palette (Ctrl/Cmd+K) + toasts
-    views/                overview · workflows · agents · backlog · references · docs
+server.py            BFF: serve frontend/dist + dispatch do cockpit_api  (stdlib, sem proxy)
+cockpit_api.py       endpoints AI (status, models/Ollama, agents, runs+SSE, decisions, workflows)
+studio_mirror.py     estúdio por ARQUIVO: /api/state, kgraph, consult, /img — lê o repo do motor
+frontend/            app React (Vite + TS + Tailwind + Radix + TanStack Query)
+  src/api/           contrato tipado + mocks + client + hooks (Query/SSE)
+  src/components/    design system (ui/) + shell (sidebar/topbar/command palette)
+  src/screens/       overview · agents · runs · run-detail · workflows · models · decisions · artifacts · docs
 mocks/state.sample.json   snapshot real de /api/state (contrato + modo offline)
-docs/                      INSPECTION.md · ARCHITECTURE.md
+docs/                INSPECTION.md (histórico) · ARCHITECTURE.md
 ```
 
-## Navegação (IA)
+## Telas
 
-| Página | O que mostra |
+| Tela | O que mostra |
 |---|---|
-| **Visão Geral** | mission control: métricas, foco ativo + pipeline, pulso, inventário, pendências |
-| **Workflows** | o ciclo como *recipe* (quando usar · inputs · outputs · tools · checklist · riscos) + propostas do Arquiteto |
-| **Agentes & Runs** | org PM/Lead/Arquiteto, feed de execução, métricas, sessões/worktrees |
-| **Backlog** | kanban (backlog · refinamento · execução · teste · executado) |
-| **Referências** | Reference Pack + curadoria, galeria de renders, aprendizado, patches |
-| **Documentação** | arquitetura, base de conhecimento, links para Explica/Mapa/Fluxo |
+| **Visão Geral** | mission control: status, métricas, runs recentes, decisões, workflow ativo |
+| **Agentes** | time multi-agente — status, modelo, tools, disparo de run |
+| **Runs** | histórico filtrável; o detalhe traz timeline + **log viewer ao vivo (SSE)** |
+| **Workflows** | recipes (quando usar · inputs · outputs · tools · checklist · riscos) |
+| **Modelos** | modelos do Ollama + testar prompt (via BFF) |
+| **Decisões** | gates (propostas, revisão visual) com responder |
+| **Artefatos** | renders, SKPs, relatórios (lightbox in-app) |
+| **Documentação** | arquitetura, pipeline, guia das telas, base de conhecimento — tudo in-app |
+| **Studio Flow** | documentação viva ponta a ponta: timeline interativa, mapa de arquitetura, árvore dos repos, recipes, runbook (gerada do código real, marcando implemented/mock/planned) |
 
-Detalhes em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Levantamento original em
-[`docs/INSPECTION.md`](docs/INSPECTION.md).
+Endpoints e contrato em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) e `frontend/src/api/types.ts`.
+
+## Temas
+
+O cockpit tem **10 temas premium** trocáveis pelo **header** — persistem em `localStorage`,
+com transição suave e respeitando `prefers-reduced-motion`. Tudo é **token-driven** (CSS vars
+HSL), então o tema propaga em sidebar, header, cards, badges, logs e docs sem hardcode.
+
+- Default: **🌑 Obsidian Agent** (AI cockpit dark premium). Demais: ◼️ Linear Slate, 🟨 Studio Gold,
+  🧬 Cyber Grid, 📐 Blueprint Architect, 🟢 Supabase Emerald, 🚀 Raycast Command, 🟣 Cursor Neon,
+  🧊 Frosted Glass, ☀️ Minimal Light (claro).
+- Compare todos na tela **Theme Lab** (`/theme-lab`) — todos os componentes num lugar só.
+
+### Como adicionar um tema
+
+1. Em `frontend/src/theme/themes.ts`, adicione um objeto `Theme` (tipo em `theme-types.ts`):
+   `id`, `name`, `emoji`, `description`, `isDark`, `background` (`none`/`grid`/`mesh`/`glass`/`glow`/`dots`),
+   `motion`, `preview` (4 cores hex), `colors` (HSL triplets — ver as chaves em `theme-types.ts`),
+   e `glow`/`shadow`/`radius`.
+2. Pronto — ele aparece no switcher do header e no Theme Lab automaticamente.
+
+Arquivos: `src/theme/` (`theme-types`, `themes`, `apply-theme`, `theme-provider`, `use-theme`) ·
+`src/components/theme/theme-switcher.tsx`.

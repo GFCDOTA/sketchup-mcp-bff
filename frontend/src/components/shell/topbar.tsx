@@ -5,6 +5,7 @@ import { NAV } from "@/config/nav";
 import { useUi } from "@/store/ui";
 import { Button } from "@/components/ui/button";
 import { ConnBadge } from "./conn-badge";
+import { ThemeSwitcher } from "@/components/theme/theme-switcher";
 
 function currentLabel(pathname: string): string {
   const items = NAV.flatMap((s) => s.items);
@@ -23,7 +24,7 @@ export function Topbar() {
   const setSidebar = useUi((s) => s.setSidebarOpen);
 
   return (
-    <header className="flex h-14 items-center gap-4 border-b border-border bg-background/75 px-5 backdrop-blur-md">
+    <header className="flex h-14 items-center gap-4 border-b border-border bg-header/80 px-5 text-header-foreground backdrop-blur-md">
       <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setSidebar(true)}>
         <Menu className="size-5" />
       </Button>
@@ -48,6 +49,7 @@ export function Topbar() {
         <RefreshCw className="size-[17px]" />
       </Button>
 
+      <ThemeSwitcher />
       <ConnBadge />
     </header>
   );
