@@ -645,3 +645,106 @@ export interface BridgeSkp {
   reason?: string;
   plants: SkpPlant[];
 }
+
+/* ─────────────── Curadoria (KICKOFF_CURADORIA) — corpus julgado + clique do humano ─────────────── */
+
+/** Verdict da MÁQUINA sobre uma variante — NUNCA IMPROVED/SAME/WORSE (esses são exclusivos do humano). */
+export type MachineVerdict = "CANDIDATE" | "FAIL" | "PENDING_VISION";
+/** Verdict do HUMANO (Felipe) — só nasce de clique na tela de curadoria. */
+export type HumanVerdictValue = "IMPROVED" | "SAME" | "WORSE";
+export type GateVerdict = "PASS" | "WARN" | "FAIL";
+
+/** Um dos 7 eixos do visual_findings.v1 (FP-032). */
+export interface CurationAxis {
+  verdict: GateVerdict;
+  evidence: string;
+}
+
+/** Um padrão de design observado pelo painel de juízes (memória pré-FP-035). */
+export interface DesignPattern {
+  pattern: string;
+  verdict: "works" | "fails" | "neutral";
+  why: string;
+}
+
+/** Veredito humano fundido de human_verdicts.jsonl (last-wins por variant_id). */
+export interface HumanVerdict {
+  verdict: HumanVerdictValue | null;
+  note: string;
+  t: string | null;
+}
+
+/** Uma variante julgada do corpus (last-wins do corpus.jsonl). */
+export interface CurationVariant {
+  variant_id: string;
+  created_at: string | null;
+  plant: string;
+  verdict: MachineVerdict;
+  /** objeto inteiro — o label "machine_provisional" é honestidade, não decoração */
+  machine_score: { value: number | null; label: string } | null;
+  params: { style: string | null; theme: string; layout_seed: number; layout_source?: string };
+  theme: string;
+  gates: Record<string, GateVerdict>;
+  n_boxes: number | null;
+  img: string | null;
+  renderer: string | null;
+  top_level_verdict: string | null;
+  discriminated: boolean;
+  axes: Record<string, CurationAxis>;
+  findings_count: number;
+  patterns: DesignPattern[];
+  promotion_note: string | null;
+  /** nº de appends no corpus (transparência do upgrade PENDING_VISION→CANDIDATE) */
+  revisions: number;
+  human_verdict: HumanVerdict | null;
+}
+
+/** Agregação de um pattern por todo o corpus (Fatia 3 — "o que já aprendemos"). */
+export interface PatternAgg {
+  pattern: string;
+  works: number;
+  fails: number;
+  neutral: number;
+  themes: string[];
+  variants: string[];
+  why: string[];
+}
+
+export interface CurationPatterns {
+  total: number;
+  works: number;
+  fails: number;
+  neutral: number;
+  patterns: PatternAgg[];
+}
+
+/** GET /api/curation/<plant> — galeria + padrões numa leitura só. */
+export interface CurationResponse {
+  live: boolean;
+  plant: string;
+  reason?: string;
+  counts: Record<string, number>;
+  awaiting_human?: number;
+  themes: string[];
+  variants: CurationVariant[];
+  patterns: CurationPatterns;
+}
+
+/** GET /api/curation/plants */
+export interface CurationPlantsResponse {
+  plants: string[];
+  root: string;
+}
+
+/** POST /api/curation/<plant>/verdict — o clique do Felipe. */
+export interface CurationVerdictRequest {
+  variant_id: string;
+  verdict: HumanVerdictValue;
+  note?: string;
+}
+
+export interface CurationVerdictResponse {
+  ok: boolean;
+  recorded?: { variant_id: string; human_verdict: HumanVerdictValue; note: string; t: string };
+  error?: string;
+}
