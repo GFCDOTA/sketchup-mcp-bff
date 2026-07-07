@@ -672,6 +672,10 @@ export interface HumanVerdict {
   verdict: HumanVerdictValue | null;
   note: string;
   t: string | null;
+  /** gosto do Felipe (thumbs); null = não sinalizado */
+  liked?: boolean | null;
+  tags?: string[];
+  batch_id?: string | null;
 }
 
 /** Uma variante julgada do corpus (last-wins do corpus.jsonl). */
@@ -736,15 +740,47 @@ export interface CurationPlantsResponse {
   root: string;
 }
 
-/** POST /api/curation/<plant>/verdict — o clique do Felipe. */
+/** POST /api/curation/<plant>/verdict — o clique do Felipe (veredito único). */
 export interface CurationVerdictRequest {
   variant_id: string;
   verdict: HumanVerdictValue;
   note?: string;
+  liked?: boolean | null;
+  tags?: string[];
+}
+
+/** Um registro curadoria_verdict.v1 como gravado (o shape que o BFF devolve em `recorded`). */
+export interface CurationVerdictRecord {
+  variant_id: string;
+  human_verdict: HumanVerdictValue;
+  liked: boolean | null;
+  note: string;
+  tags: string[];
+  batch_id: string;
+  t: string;
 }
 
 export interface CurationVerdictResponse {
   ok: boolean;
-  recorded?: { variant_id: string; human_verdict: HumanVerdictValue; note: string; t: string };
+  recorded?: CurationVerdictRecord;
+  error?: string;
+}
+
+/** Um item do POST em LOTE — human_verdict conforme o curadoria_verdict schema. */
+export interface CurationVerdictBatchItem {
+  variant_id: string;
+  human_verdict: HumanVerdictValue;
+  liked?: boolean | null;
+  note?: string;
+  tags?: string[];
+}
+
+/** POST /api/curation/<plant>/verdicts — o clique do Felipe em LOTE (plural). */
+export interface CurationVerdictBatchResponse {
+  ok: boolean;
+  batch_id?: string;
+  t?: string;
+  recorded?: CurationVerdictRecord[];
+  errors?: { variant_id: string | null; error: string }[];
   error?: string;
 }

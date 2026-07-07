@@ -26,6 +26,8 @@ from pathlib import Path
 import file_activity as fa
 
 HUMAN_VERDICTS = ("IMPROVED", "SAME", "WORSE")
+# teto de itens por POST em lote (config `max_batch_verdicts_per_request`; env override)
+MAX_BATCH_VERDICTS = max(1, int(os.environ.get("BFF_MAX_BATCH_VERDICTS", "100") or "100"))
 _AXES = ("wall_fidelity", "door_fidelity", "window_fidelity", "room_fidelity",
          "scale_rotation", "global_visual", "material_light")
 _HV_LOCK = threading.Lock()
@@ -295,6 +297,47 @@ def record_human_verdict(plant: str, variant_id: str, verdict: str,
             repo=fa.REPO_ENGINE, endpoint=f"/api/curation/{plant}/verdict",
             label=f"human_verdict {verdict} — {variant_id}")
     return rec
+
+
+def record_human_verdicts_batch(plant: str, items: list,
+                                batch_id: str | None = None,
+                                t: str | None = None) -> dict | None:
+    """Grava um LOTE de vereditos humanos (plural) — o Felipe julga N variantes de
+    uma vez. N appends sob UM ÚNICO _HV_LOCK (não N locks), com um batch_id comum.
+
+    `items`: lista de {variant_id, human_verdict|verdict (IMPROVED|SAME|WORSE),
+    liked?, note?, tags?}. Variant desconhecido / verdict inválido = erro SÓ daquele
+    item (reportado em `errors`); os demais gravam. corpus.jsonl NUNCA é tocado.
+    None = plant inválido / items não-lista. OSError propaga → caller responde 503."""
+    if not _safe_seg(plant) or not isinstance(items, list):
+        return None
+    d = _plant_dir(plant)
+    known, _ = _last_wins(_read_jsonl_all(d / "corpus.jsonl"))   # corpus lido UMA vez
+    bid = batch_id or _new_batch_id()
+    ts = t or _utcnow()
+    recs: list[dict] = []
+    errors: list[dict] = []
+    for it in items:
+        if not isinstance(it, dict):
+            errors.append({"variant_id": None, "error": "invalid_item"})
+            continue
+        vid = str(it.get("variant_id") or "")
+        verdict = str(it.get("human_verdict") or it.get("verdict") or "").upper()
+        if verdict not in HUMAN_VERDICTS:
+            errors.append({"variant_id": vid, "error": "invalid_verdict"})
+            continue
+        if vid not in known:
+            errors.append({"variant_id": vid, "error": "unknown_variant"})
+            continue
+        recs.append(_verdict_rec(vid, verdict, liked=it.get("liked"),
+                                 note=it.get("note"), tags=it.get("tags"),
+                                 batch_id=bid, t=ts))
+    _append_verdicts(plant, recs)   # UM lock para os N appends
+    if recs:
+        fa.emit(f"data/runs/noc_variant_sweep/{plant}/human_verdicts.jsonl", "write", "human",
+                repo=fa.REPO_ENGINE, endpoint=f"/api/curation/{plant}/verdicts",
+                label=f"lote {bid}: {len(recs)} veredito(s), {len(errors)} erro(s)")
+    return {"batch_id": bid, "t": ts, "recorded": recs, "errors": errors}
 
 
 # ── imagem da variante (guard anti-traversal, espelha studio_mirror._serve_image) ───────

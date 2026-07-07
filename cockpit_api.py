@@ -553,6 +553,10 @@ def dispatch(h) -> bool:
     if method == "GET" and m:
         from urllib.parse import unquote
         return _ok(h, curation.curation_view(unquote(m.group(1))))
+    m = re.match(r"^/api/curation/([^/]+)/verdicts$", path)   # PLURAL — curadoria em LOTE
+    if method == "POST" and m:
+        from urllib.parse import unquote
+        return _curation_verdicts(h, unquote(m.group(1)), _body(h))
     m = re.match(r"^/api/curation/([^/]+)/verdict$", path)
     if method == "POST" and m:
         from urllib.parse import unquote
@@ -670,6 +674,29 @@ def _curation_verdict(h, plant: str, body: dict) -> bool:
         return _ok(h, {"ok": False, "error": "unknown_variant",
                        "plant": plant, "variant_id": variant_id}, 404)
     return _ok(h, {"ok": True, "recorded": rec})
+
+
+def _curation_verdicts(h, plant: str, body) -> bool:
+    """POST /api/curation/<plant>/verdicts — o CLIQUE do Felipe em LOTE (plural).
+    Aceita um array [{variant_id, human_verdict, liked, note, tags}] (ou {"items": [...]}).
+    N appends sob UM único _HV_LOCK; variant/verdict inválido isola SÓ aquele item.
+    Espelha _curation_verdict: só a tela grava, o corpus.jsonl do motor nunca é tocado."""
+    items = body if isinstance(body, list) else \
+        ((body or {}).get("items") or (body or {}).get("verdicts") or [])
+    if not isinstance(items, list) or not items:
+        return _ok(h, {"ok": False, "error": "empty_batch",
+                       "hint": "envie um array de vereditos [{variant_id, human_verdict, ...}]"}, 400)
+    if len(items) > curation.MAX_BATCH_VERDICTS:
+        return _ok(h, {"ok": False, "error": "batch_too_large",
+                       "max": curation.MAX_BATCH_VERDICTS, "got": len(items)}, 400)
+    try:
+        res = curation.record_human_verdicts_batch(plant, items)
+    except OSError as e:   # inclui PermissionError — dado montado read-only
+        return _ok(h, {"ok": False, "error": "verdict_write_unavailable",
+                       "detail": str(e)}, 503)
+    if res is None:
+        return _ok(h, {"ok": False, "error": "invalid_plant", "plant": plant}, 400)
+    return _ok(h, {"ok": True, **res})
 
 
 def _bridge_gate_stream(h) -> bool:

@@ -4,11 +4,15 @@
 // Fatia 3: card "o que já aprendemos" (patterns agregados, pré-FP-035).
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Stamp, Sparkles, CircleCheck, CircleX, CircleDashed } from "lucide-react";
-import { useCuration, useCurationVerdict } from "@/api/hooks";
+import {
+  Stamp, Sparkles, CircleCheck, CircleX, CircleDashed,
+  ThumbsUp, ThumbsDown, Check, ListChecks, X,
+} from "lucide-react";
+import { useCuration, useCurationVerdict, useCurationVerdicts } from "@/api/hooks";
 import { DEFAULT_PLANT } from "@/api/client";
 import type {
-  CurationVariant, DesignPattern, HumanVerdictValue, MachineVerdict, PatternAgg,
+  CurationVariant, CurationVerdictBatchResponse, DesignPattern, HumanVerdictValue,
+  MachineVerdict, PatternAgg,
 } from "@/api/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardEyebrow, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,11 +48,39 @@ export default function Curation() {
   const [verdictFilter, setVerdictFilter] = useState<string>("ALL");
   const [themeFilter, setThemeFilter] = useState<string>("ALL");
   const [zoom, setZoom] = useState<CurationVariant | null>(null);
+  // seleção múltipla p/ curadoria em LOTE (o Felipe julga N variantes de uma vez)
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [lastBatch, setLastBatch] = useState<CurationVerdictBatchResponse | null>(null);
 
   const variants = (data?.variants ?? []).filter(
     (v) => (verdictFilter === "ALL" || v.verdict === verdictFilter)
         && (themeFilter === "ALL" || v.theme === themeFilter),
   );
+  // só variantes já julgadas pela máquina entram no lote (PENDING_VISION não é julgável)
+  const judgeableVisible = variants.filter((v) => v.verdict !== "PENDING_VISION");
+  const allSelected = judgeableVisible.length > 0
+    && judgeableVisible.every((v) => selected.has(v.variant_id));
+
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  const toggleAll = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      judgeableVisible.forEach((v) => allSelected ? next.delete(v.variant_id) : next.add(v.variant_id));
+      return next;
+    });
+  // pós-lote: mantém só as que FALHARAM selecionadas (reenvio); sucesso total fecha a barra
+  const onBatchApplied = (res: CurationVerdictBatchResponse) => {
+    setLastBatch(res);
+    const failed = new Set(
+      (res.errors ?? []).map((e) => e.variant_id).filter((x): x is string => !!x),
+    );
+    setSelected(failed);
+  };
 
   return (
     <>
@@ -82,12 +114,35 @@ export default function Curation() {
                 options={[["ALL", "todos os temas"], ...data.themes.map((t) => [t, t] as [string, string])]}
               />
             )}
+            {judgeableVisible.length > 0 && (
+              <Button variant="ghost" size="sm" className="h-7 text-[11px]" onClick={toggleAll}>
+                <ListChecks className="mr-1 size-3.5" />
+                {allSelected ? "limpar seleção" : `selecionar ${judgeableVisible.length}`}
+              </Button>
+            )}
             {(data.awaiting_human ?? 0) > 0 && (
               <span className="ml-auto text-xs text-muted-foreground">
                 <span className="font-semibold text-primary">{data.awaiting_human}</span> aguardando seu veredito
               </span>
             )}
           </div>
+
+          {/* eco do último lote — quantas gravaram, quantas foram recusadas */}
+          {lastBatch && (
+            <div className="flex items-center gap-2 rounded-md border border-border/60 bg-background/40 px-3 py-2 text-xs">
+              <ListChecks className="size-4 shrink-0 text-primary" />
+              <span>
+                Lote gravado: <span className="font-semibold">{lastBatch.recorded?.length ?? 0}</span> veredito(s)
+                {(lastBatch.errors?.length ?? 0) > 0 && (
+                  <> · <span className="text-warn">{lastBatch.errors!.length} recusada(s)</span></>
+                )}
+              </span>
+              <button className="ml-auto text-muted-foreground hover:text-foreground"
+                onClick={() => setLastBatch(null)} aria-label="fechar">
+                <X className="size-3.5" />
+              </button>
+            </div>
+          )}
 
           {variants.length === 0 ? (
             <Card><EmptyState icon={Stamp} title="Nada nesse filtro" /></Card>
@@ -96,12 +151,19 @@ export default function Curation() {
               className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {variants.map((v) => (
                 <motion.div key={v.variant_id} variants={staggerItem}>
-                  <VariantCard v={v} plant={plant} onZoom={setZoom} />
+                  <VariantCard v={v} plant={plant} onZoom={setZoom}
+                    selected={selected.has(v.variant_id)} onToggleSelect={toggleSelect} />
                 </motion.div>
               ))}
             </motion.div>
           )}
         </div>
+      )}
+
+      {/* barra de ação em LOTE — só aparece com ≥1 selecionada */}
+      {selected.size > 0 && (
+        <BatchActionBar plant={plant} selectedIds={[...selected]}
+          onApplied={onBatchApplied} onClear={() => setSelected(new Set())} />
       )}
 
       {/* lightbox — o iso.png em tamanho real */}
@@ -192,11 +254,13 @@ function PatternIcon({ works, fails }: { works: number; fails: number }) {
 }
 
 /* ── Fatia 1 + 2: card da variante com o CLIQUE ─────────────────────────────*/
-function VariantCard({ v, plant, onZoom }: {
+function VariantCard({ v, plant, onZoom, selected, onToggleSelect }: {
   v: CurationVariant; plant: string; onZoom: (v: CurationVariant) => void;
+  selected: boolean; onToggleSelect: (id: string) => void;
 }) {
   const verdict = useCurationVerdict(plant);
   const [note, setNote] = useState("");
+  const judgeable = v.verdict !== "PENDING_VISION";
 
   const judge = (value: HumanVerdictValue) =>
     verdict.mutate({ variant_id: v.variant_id, verdict: value, note: note || undefined },
@@ -206,7 +270,20 @@ function VariantCard({ v, plant, onZoom }: {
     ? v.variant_id.slice(plant.length + 2) : v.variant_id;
 
   return (
-    <Card className="overflow-hidden">
+    <Card className={cn("relative overflow-hidden", selected && "ring-2 ring-primary")}>
+      {judgeable && (
+        <button type="button" onClick={() => onToggleSelect(v.variant_id)}
+          aria-label={selected ? "desmarcar do lote" : "marcar para o lote"}
+          aria-pressed={selected}
+          className={cn(
+            "absolute left-2 top-2 z-10 grid size-6 place-items-center rounded-md border transition-colors",
+            selected
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-border bg-background/80 text-transparent hover:text-muted-foreground",
+          )}>
+          <Check className="size-4" />
+        </button>
+      )}
       {v.img ? (
         <button onClick={() => onZoom(v)} className="block aspect-[4/3] w-full bg-black">
           <img src={v.img} alt={v.variant_id} loading="lazy" className="h-full w-full object-contain" />
@@ -266,6 +343,11 @@ function VariantCard({ v, plant, onZoom }: {
           {v.human_verdict?.verdict ? (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
               <Badge variant={HUMAN_BADGE[v.human_verdict.verdict]}>{v.human_verdict.verdict}</Badge>
+              {v.human_verdict.liked === true && <ThumbsUp className="size-3.5 text-ok" />}
+              {v.human_verdict.liked === false && <ThumbsDown className="size-3.5 text-danger" />}
+              {(v.human_verdict.tags ?? []).map((tg) => (
+                <Badge key={tg} variant="outline">{tg}</Badge>
+              ))}
               {v.human_verdict.note && <span className="text-muted-foreground">“{v.human_verdict.note}”</span>}
               {v.human_verdict.t && (
                 <span className="ml-auto font-mono text-[10px] text-muted-foreground/50">
@@ -275,11 +357,11 @@ function VariantCard({ v, plant, onZoom }: {
             </div>
           ) : (
             <div className="text-[11px] text-muted-foreground/70">
-              {v.verdict === "PENDING_VISION" ? "aguardando o painel de visão…" : "seu veredito:"}
+              {judgeable ? "seu veredito:" : "aguardando o painel de visão…"}
             </div>
           )}
 
-          {v.verdict !== "PENDING_VISION" && (
+          {judgeable && (
             <div className="mt-1.5 space-y-1.5">
               <div className="flex gap-1.5">
                 {(["IMPROVED", "SAME", "WORSE"] as const).map((value) => (
@@ -301,6 +383,75 @@ function VariantCard({ v, plant, onZoom }: {
         </div>
       </div>
     </Card>
+  );
+}
+
+/* ── barra de ação em LOTE (curadoria plural) ──────────────────────────────*/
+function BatchActionBar({ plant, selectedIds, onApplied, onClear }: {
+  plant: string; selectedIds: string[];
+  onApplied: (res: CurationVerdictBatchResponse) => void; onClear: () => void;
+}) {
+  const verdicts = useCurationVerdicts(plant);
+  const [liked, setLiked] = useState<boolean | null>(null);
+  const [tags, setTags] = useState("");
+
+  const parseTags = (s: string) =>
+    Array.from(new Set(s.split(",").map((t) => t.trim()).filter(Boolean)));
+
+  const apply = (value: HumanVerdictValue) => {
+    const tagList = parseTags(tags);
+    const items = selectedIds.map((id) => ({
+      variant_id: id, human_verdict: value, liked, tags: tagList,
+    }));
+    verdicts.mutate(items, {
+      onSuccess: (res) => { setTags(""); setLiked(null); onApplied(res); },
+    });
+  };
+
+  return (
+    <div className="fixed inset-x-0 bottom-4 z-50 flex justify-center px-4">
+      <div className="w-full max-w-3xl rounded-xl border border-border bg-card/95 p-3 shadow-lg backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold">
+            <span className="text-primary">{selectedIds.length}</span> selecionada(s)
+          </span>
+
+          {/* gostei / não — tri-state (clicar de novo desmarca) */}
+          <div className="flex gap-1">
+            <Button size="sm" variant={liked === true ? "primary" : "outline"}
+              className="h-7 text-[11px]" onClick={() => setLiked((p) => (p === true ? null : true))}>
+              <ThumbsUp className="mr-1 size-3.5" /> gostei
+            </Button>
+            <Button size="sm" variant={liked === false ? "destructive" : "outline"}
+              className="h-7 text-[11px]" onClick={() => setLiked((p) => (p === false ? null : false))}>
+              <ThumbsDown className="mr-1 size-3.5" /> não
+            </Button>
+          </div>
+
+          <Input value={tags} onChange={(e) => setTags(e.target.value)}
+            placeholder="tags, separadas por vírgula"
+            className="h-7 w-48 text-[11px]" maxLength={200} />
+
+          <div className="ml-auto flex gap-1.5">
+            {(["IMPROVED", "SAME", "WORSE"] as const).map((value) => (
+              <Button key={value} size="sm"
+                variant={value === "WORSE" ? "destructive" : value === "IMPROVED" ? "primary" : "outline"}
+                className="h-7 text-[11px]" disabled={verdicts.isPending}
+                onClick={() => apply(value)}>
+                {value}
+              </Button>
+            ))}
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]"
+              onClick={onClear} aria-label="limpar seleção">
+              <X className="size-3.5" />
+            </Button>
+          </div>
+        </div>
+        {verdicts.isError && (
+          <div className="mt-1.5 text-[11px] text-danger">{(verdicts.error as Error)?.message}</div>
+        )}
+      </div>
+    </div>
   );
 }
 

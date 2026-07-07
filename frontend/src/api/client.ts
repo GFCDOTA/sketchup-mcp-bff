@@ -11,6 +11,7 @@ import type {
   BridgeHealth, BridgeGate, BridgeSessions, BridgeGit, BridgeSkp,
   GateAccessEvent, GateStreamSeed,
   CurationResponse, CurationPlantsResponse, CurationVerdictRequest, CurationVerdictResponse,
+  CurationVerdictBatchItem, CurationVerdictBatchResponse,
 } from "./types";
 import { mocks } from "./mocks";
 
@@ -195,6 +196,20 @@ export const api = {
     if (USE_MOCKS) return delay().then(() => ({ ok: true }));
     return http(`/api/curation/${encodeURIComponent(plant)}/verdict`, {
       method: "POST", body: JSON.stringify(body),
+    });
+  },
+  // o clique em LOTE (plural) — N vereditos num POST, um único batch_id no BFF
+  async respondCurationVerdicts(plant: string, items: CurationVerdictBatchItem[]): Promise<CurationVerdictBatchResponse> {
+    if (USE_MOCKS) return delay().then(() => ({
+      ok: true, batch_id: "hv_mock", t: new Date().toISOString(),
+      recorded: items.map((it) => ({
+        variant_id: it.variant_id, human_verdict: it.human_verdict,
+        liked: it.liked ?? null, note: it.note ?? "", tags: it.tags ?? [],
+        batch_id: "hv_mock", t: new Date().toISOString(),
+      })), errors: [],
+    }));
+    return http(`/api/curation/${encodeURIComponent(plant)}/verdicts`, {
+      method: "POST", body: JSON.stringify({ items }),
     });
   },
 };

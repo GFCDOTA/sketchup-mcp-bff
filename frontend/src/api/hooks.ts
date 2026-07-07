@@ -6,6 +6,7 @@ import {
 import { api, streamRunLogs, streamFileEvents, streamGateAccess } from "./client";
 import type {
   ChatRequest, LogLine, FileActivityEvent, GateAccessEvent, CurationVerdictRequest,
+  CurationVerdictBatchItem,
 } from "./types";
 
 export const qk = {
@@ -85,6 +86,15 @@ export function useCurationVerdict(plant: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CurationVerdictRequest) => api.respondCurationVerdict(plant, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.curation(plant) }),
+  });
+}
+
+/** o clique em LOTE — julga N variantes de uma vez (um único batch_id no BFF). */
+export function useCurationVerdicts(plant: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: CurationVerdictBatchItem[]) => api.respondCurationVerdicts(plant, items),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.curation(plant) }),
   });
 }

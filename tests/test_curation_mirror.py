@@ -199,6 +199,76 @@ class CurationMirrorTest(unittest.TestCase):
             (self.root / PLANT / "human_verdicts.jsonl").write_text(
                 "".join(ln for ln in text if "hv_defaults" not in ln), "utf-8")
 
+    # ── Commit B: LOTE (plural) — N appends sob UM lock, erro isola o item ──────
+    def test_record_human_verdicts_batch_writes_n_under_one_lock(self):
+        corpus = self.root / PLANT / "corpus.jsonl"
+        hv = self.root / PLANT / "human_verdicts.jsonl"
+        corpus_before = corpus.read_bytes()
+        before = len(hv.read_text("utf-8").splitlines())
+
+        # o lock é o MESMO objeto pro lote inteiro; conto quantas vezes é adquirido
+        # (threading.Lock.__enter__ é read-only → embrulho num wrapper contável)
+        class _CountingLock:
+            def __init__(self, inner):
+                self.inner, self.n = inner, 0
+
+            def __enter__(self):
+                self.n += 1
+                return self.inner.__enter__()
+
+            def __exit__(self, *a):
+                return self.inner.__exit__(*a)
+
+        counting = _CountingLock(self.cm._HV_LOCK)
+        orig = self.cm._HV_LOCK
+        self.cm._HV_LOCK = counting
+        try:
+            res = self.cm.record_human_verdicts_batch(PLANT, [
+                {"variant_id": V1, "human_verdict": "IMPROVED", "liked": True,
+                 "note": "bom", "tags": ["quente", "quente"]},
+                {"variant_id": V2, "human_verdict": "WORSE", "liked": False, "tags": ["escuro"]},
+                {"variant_id": "nao_existe", "human_verdict": "SAME"},   # isola só este
+                {"variant_id": V1, "verdict": "banana"},                 # verdict inválido — isola
+            ], batch_id="hv_lote1", t="2026-07-04T13:00:00Z")
+        finally:
+            self.cm._HV_LOCK = orig
+        try:
+            self.assertEqual(counting.n, 1)                        # UM único lock p/ os N
+            self.assertEqual(len(res["recorded"]), 2)              # V1 e V2 gravaram
+            self.assertEqual(len(res["errors"]), 2)                # desconhecido + verdict inválido
+            errs = {e["variant_id"]: e["error"] for e in res["errors"]}
+            self.assertEqual(errs["nao_existe"], "unknown_variant")
+            self.assertEqual(errs[V1], "invalid_verdict")
+            self.assertEqual(res["batch_id"], "hv_lote1")
+            # todos os recs válidos compartilham o batch_id + t do lote
+            self.assertTrue(all(r["batch_id"] == "hv_lote1" for r in res["recorded"]))
+            self.assertTrue(all(r["t"] == "2026-07-04T13:00:00Z" for r in res["recorded"]))
+            self.assertEqual([r["tags"] for r in res["recorded"]], [["quente"], ["escuro"]])
+            self.assertEqual([r["liked"] for r in res["recorded"]], [True, False])
+            # corpus intocado byte-a-byte; 2 linhas novas no jsonl humano
+            self.assertEqual(corpus.read_bytes(), corpus_before)
+            self.assertEqual(len(hv.read_text("utf-8").splitlines()), before + 2)
+        finally:
+            text = hv.read_text("utf-8").splitlines(keepends=True)
+            hv.write_text("".join(ln for ln in text if "hv_lote1" not in ln), "utf-8")
+
+    def test_record_human_verdicts_batch_all_invalid_writes_nothing(self):
+        hv = self.root / PLANT / "human_verdicts.jsonl"
+        before = len(hv.read_text("utf-8").splitlines())
+        res = self.cm.record_human_verdicts_batch(PLANT, [
+            {"variant_id": "fantasma", "human_verdict": "IMPROVED"},
+            {"variant_id": V1, "human_verdict": "nope"},
+            "nao_dict",
+        ], batch_id="hv_vazio")
+        self.assertEqual(res["recorded"], [])
+        self.assertEqual(len(res["errors"]), 3)
+        # nada válido → nenhum append (arquivo humano intacto)
+        self.assertEqual(len(hv.read_text("utf-8").splitlines()), before)
+
+    def test_record_human_verdicts_batch_rejects_bad_plant_or_items(self):
+        self.assertIsNone(self.cm.record_human_verdicts_batch("../fora", [{"variant_id": V1, "human_verdict": "SAME"}]))
+        self.assertIsNone(self.cm.record_human_verdicts_batch(PLANT, "nao_lista"))
+
     def test_record_human_verdict_rejects_dishonest_input(self):
         # máquina não fala IMPROVED/SAME/WORSE — e a tela não fala CANDIDATE
         self.assertIsNone(self.cm.record_human_verdict(PLANT, V1, "CANDIDATE"))
