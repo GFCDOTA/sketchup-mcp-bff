@@ -12,7 +12,7 @@ import type {
   GateAccessEvent, GateStreamSeed,
   CurationResponse, CurationPlantsResponse, CurationVerdictRequest, CurationVerdictResponse,
   CurationVerdictBatchItem, CurationVerdictBatchResponse,
-  DecisionHistoryResponse,
+  DecisionHistoryResponse, CarteiroRunsResponse, CarteiroRunResponse,
 } from "./types";
 import { mocks } from "./mocks";
 
@@ -128,6 +128,27 @@ export const api = {
       ],
     }) as DecisionHistoryResponse);
     return http(`/api/decisions/history?limit=${encodeURIComponent(limit)}`);
+  },
+  // ACIONAMENTOS do CARTEIRO (auto_decider) — vidro read-only dos runs por ARQUIVO
+  async carteiroRuns(limit = 50): Promise<CarteiroRunsResponse> {
+    if (USE_MOCKS) return delay().then(() => ({
+      live: true, total: 2, last_run: "2026-07-04T06:00:00Z",
+      runs: [
+        { t: "2026-07-04T06:00:00Z", trigger: "manual", decided: 3, auto_approve: 2,
+          auto_reject: 1, escalated: 0, left_pending: 1, dry_run: false },
+        { t: "2026-07-04T05:00:00Z", trigger: "auto", decided: 1, auto_approve: 0,
+          auto_reject: 1, escalated: 1, left_pending: 2, dry_run: false },
+      ],
+    }) as CarteiroRunsResponse);
+    return http(`/api/carteiro/runs?limit=${encodeURIComponent(limit)}`);
+  },
+  // o GATILHO — "Rodar carteiro agora": o BFF toca o arquivo, o atuador (host) roda no sweep
+  async runCarteiro(source = "manual"): Promise<CarteiroRunResponse> {
+    if (USE_MOCKS) return delay().then(() => ({
+      ok: true, queued_at: new Date().toISOString(),
+      note: "o atuador roda no proximo sweep (ate ~60s)",
+    }));
+    return http("/api/carteiro/run", { method: "POST", body: JSON.stringify({ source }) });
   },
   async respondDecision(id: string, body: DecisionRespondRequest): Promise<DecisionRespondResponse> {
     if (USE_MOCKS) return delay().then(() => ({ ok: true }));

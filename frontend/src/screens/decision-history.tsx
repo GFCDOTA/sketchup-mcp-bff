@@ -7,14 +7,17 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   Gavel, ServerCog, ShieldCheck, ChevronDown, ChevronRight, Bot, Scale, Clock,
+  Zap, Play, Loader2, CheckCircle2, AlertTriangle, Hand,
 } from "lucide-react";
-import { useDecisionHistory } from "@/api/hooks";
+import { useDecisionHistory, useCarteiroRuns, useRunCarteiro } from "@/api/hooks";
 import type {
   DecisionAction, DecisionAuditRecord, DecisionClassification, DecisionType,
+  CarteiroRunRecord,
 } from "@/api/types";
 import { PageHeader } from "@/components/page-header";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { EmptyState, ErrorState } from "@/components/states";
 import { SkeletonText } from "@/components/ui/skeleton";
 import { staggerContainer, staggerItem } from "@/components/flow/animated-section";
@@ -89,6 +92,9 @@ export default function DecisionHistory() {
         </CardContent>
       </Card>
 
+      {/* ACIONAMENTOS — "Rodar carteiro agora" (gatilho) + últimos drains */}
+      <CarteiroRunsCard />
+
       {isError ? (
         <ErrorState message={error?.message} />
       ) : isLoading ? (
@@ -124,6 +130,103 @@ export default function DecisionHistory() {
         </div>
       )}
     </>
+  );
+}
+
+/* ── ACIONAMENTOS: o botão "Rodar agora" (gatilho) + a lista dos últimos drains ── */
+function CarteiroRunsCard() {
+  const { data } = useCarteiroRuns(20);
+  const run = useRunCarteiro();
+  const [flash, setFlash] = useState<string | null>(null);
+
+  const trigger = () =>
+    run.mutate("manual", {
+      onSuccess: (res) => {
+        setFlash(res.ok ? "acionado — roda em até 60s" : (res.error ?? "não foi possível acionar"));
+        window.setTimeout(() => setFlash(null), 6000);
+      },
+    });
+
+  const runs = data?.runs ?? [];
+  const last = data?.last_run ? fmtRelative(data.last_run) : null;
+
+  return (
+    <Card className="mb-4" accent="gold">
+      <CardHeader>
+        <div className="min-w-0">
+          <CardTitle className="flex items-center gap-2">
+            <Zap className="size-4 text-primary" /> Acionamentos do carteiro
+          </CardTitle>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {last ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Clock className="size-3.5" /> último acionamento{" "}
+                <strong className="font-medium text-foreground" title={last.abs}>{last.rel}</strong>
+              </span>
+            ) : (
+              "o carteiro ainda não registrou um acionamento por aqui"
+            )}
+          </p>
+        </div>
+        <Button variant="primary" size="sm" onClick={trigger} disabled={run.isPending}
+          className="shrink-0">
+          {run.isPending
+            ? <><Loader2 className="size-3.5 animate-spin" /> acionando…</>
+            : <><Play className="size-3.5" /> Rodar carteiro agora</>}
+        </Button>
+      </CardHeader>
+      <CardContent>
+        <p className="text-[11px] text-muted-foreground/60">
+          o botão só TOCA um gatilho — o atuador (host) roda o drain no próximo sweep (≤60s).
+        </p>
+
+        {/* feedback do clique (toast inline — a app não tem lib de toast) */}
+        {flash && (
+          <div className={cn("mt-2.5 flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs",
+            run.data?.ok !== false && !run.isError
+              ? "border-ok/30 bg-ok/10 text-ok" : "border-danger/30 bg-danger/10 text-danger")}>
+            {run.data?.ok !== false && !run.isError
+              ? <CheckCircle2 className="size-3.5" /> : <AlertTriangle className="size-3.5" />}
+            {flash}
+          </div>
+        )}
+        {run.isError && !flash && (
+          <div className="mt-2.5 flex items-center gap-1.5 rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5 text-xs text-danger">
+            <AlertTriangle className="size-3.5" /> {run.error?.message ?? "não foi possível acionar"}
+          </div>
+        )}
+
+        {runs.length > 0 && (
+          <ul className="mt-3 space-y-1.5">
+            {runs.map((r, i) => <CarteiroRunRow key={`${r.t}-${i}`} r={r} />)}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CarteiroRunRow({ r }: { r: CarteiroRunRecord }) {
+  const when = fmtRelative(r.t);
+  const manual = r.trigger === "manual";
+  return (
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border/50 px-2.5 py-1.5 text-xs">
+      <span className="inline-flex items-center gap-1 text-muted-foreground/60" title={when.abs}>
+        <Clock className="size-3" /> {when.rel}
+      </span>
+      <Badge variant="outline" className="inline-flex items-center gap-1">
+        {manual ? <Hand className="size-3" /> : <Zap className="size-3" />}
+        {manual ? "manual" : "auto"}
+      </Badge>
+      <span className="font-medium text-foreground">{r.decided} decidida{r.decided === 1 ? "" : "s"}</span>
+      <span className="inline-flex items-center gap-2 text-[11px] text-muted-foreground/70">
+        {r.auto_approve > 0 && <span className="text-ok">+{r.auto_approve}</span>}
+        {r.auto_reject > 0 && <span className="text-danger">−{r.auto_reject}</span>}
+        {r.escalated > 0 && <span className="text-blue">↑{r.escalated} gate</span>}
+        {r.left_pending > 0 && <span className="text-warn">{r.left_pending} p/ humano</span>}
+      </span>
+      {r.dry_run && <Badge variant="outline" className="ml-auto shrink-0">dry-run</Badge>}
+    </li>
   );
 }
 

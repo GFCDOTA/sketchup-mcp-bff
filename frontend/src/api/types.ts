@@ -844,3 +844,40 @@ export interface DecisionHistoryResponse {
   total: number;
   source?: string;
 }
+
+/* ─────────────── Acionamentos do CARTEIRO (gatilho + vidro dos runs) ─────────────── */
+
+/** POST /api/carteiro/run — "Rodar carteiro agora": o BFF TOCA o gatilho; o atuador (host)
+ *  roda o drain no próximo sweep (≤60s). 503 quando o motor está read-only. */
+export interface CarteiroRunResponse {
+  ok: boolean;
+  queued_at?: string;
+  note?: string;
+  error?: string;
+  hint?: string;
+  detail?: string;
+}
+
+/** Um acionamento (drain) do carteiro, projetado pelo mirror: quando rodou, o que
+ *  disparou, quantas decidiu e como se distribuíram. */
+export interface CarteiroRunRecord {
+  t: string | null;
+  /** "manual" (botão) | "auto" (sweep) — o que disparou o drain. */
+  trigger: string | null;
+  decided: number;
+  auto_approve: number;
+  auto_reject: number;
+  escalated: number;
+  left_pending: number;
+  dry_run: boolean;
+}
+
+/** GET /api/carteiro/runs?limit= — acionamentos do carteiro, mais-recente-primeiro. */
+export interface CarteiroRunsResponse {
+  live: boolean;
+  reason?: string;
+  runs: CarteiroRunRecord[];
+  last_run: string | null;
+  total: number;
+  source?: string;
+}

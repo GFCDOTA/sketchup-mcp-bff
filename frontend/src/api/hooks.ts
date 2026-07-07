@@ -29,6 +29,7 @@ export const qk = {
   bridgeSkp: ["bridge", "skp"] as const,
   curation: (plant: string) => ["curation", plant] as const,
   decisionHistory: (limit: number) => ["decisions", "history", limit] as const,
+  carteiroRuns: (limit: number) => ["carteiro", "runs", limit] as const,
 };
 
 type QOpts<T> = Omit<UseQueryOptions<T, Error, T>, "queryKey" | "queryFn">;
@@ -59,6 +60,26 @@ export const useDecisions = () =>
 export const useDecisionHistory = (limit = 100) =>
   useQuery({ queryKey: qk.decisionHistory(limit), queryFn: () => api.decisionHistory(limit),
              refetchInterval: 8000 });
+
+/* ── Acionamentos do CARTEIRO (runs por arquivo) + o gatilho "Rodar agora" ──-*/
+export const useCarteiroRuns = (limit = 50) =>
+  useQuery({ queryKey: qk.carteiroRuns(limit), queryFn: () => api.carteiroRuns(limit),
+             refetchInterval: 8000 });
+
+/** "Rodar carteiro agora" — o BFF toca o gatilho; o atuador (host) roda em ≤60s.
+ *  Invalida os runs e o histórico agora e de novo alguns segundos depois (o resultado
+ *  do drain só aparece após o sweep). */
+export function useRunCarteiro() {
+  const qc = useQueryClient();
+  const bump = () => {
+    qc.invalidateQueries({ queryKey: ["carteiro", "runs"] });
+    qc.invalidateQueries({ queryKey: ["decisions", "history"] });
+  };
+  return useMutation({
+    mutationFn: (source?: string) => api.runCarteiro(source),
+    onSuccess: () => { bump(); window.setTimeout(bump, 8000); },
+  });
+}
 
 export const useWorkflows = () => useQuery({ queryKey: qk.workflows, queryFn: api.workflows });
 
