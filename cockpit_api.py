@@ -46,6 +46,7 @@ import bridge_mirror as bridge  # ORACULO/:8765 mirror — audit/sessoes/git/skp
 import studio_mirror as studio  # ESTUDIO/:8781 mirror — o /api/state inteiro por arquivo (vidro)
 import curation_mirror as curation  # CURADORIA — corpus julgado do sweep + veredito humano
 import decision_history_mirror as decision_history  # CARTEIRO — audit das decisões objetivas (vidro)
+import carteiro_run_mirror as carteiro_run  # CARTEIRO — gatilho (write) + acionamentos (vidro)
 
 OLLAMA = os.environ.get("BFF_OLLAMA", "http://127.0.0.1:11434").rstrip("/")
 MAX_BODY = 1 << 20  # 1 MiB — teto de corpo de POST (anti-DoS)
@@ -532,6 +533,13 @@ def dispatch(h) -> bool:
     if method == "GET" and path == "/api/decisions/history":
         lim = _q_int(query, "limit", 100, 1, 1000)
         return _ok(h, decision_history.history_view(lim))
+    # ACIONAMENTOS do CARTEIRO — vidro dos runs por ARQUIVO
+    if method == "GET" and path == "/api/carteiro/runs":
+        lim = _q_int(query, "limit", 50, 1, 500)
+        return _ok(h, carteiro_run.runs_view(lim))
+    # GATILHO do CARTEIRO — "Rodar agora": TOCA o arquivo, o atuador (host) roda no sweep
+    if method == "POST" and path == "/api/carteiro/run":
+        return _carteiro_run(h, _body(h))
     # NOC (vidro read-only): runs/ledger REAIS do atuador + saude do lock — lidos de arquivo
     if method == "GET" and path == "/api/noc/ledger":
         return _ok(h, noc.ledger_view())
@@ -668,6 +676,21 @@ def _decide(h, did: str, body: dict) -> bool:
             applied = {"ok": True, "proposal": moved}   # shape do antigo /api/proposal do :8781
             _state_cache.update(t=0.0, v=None)          # próximo /api/state já reflete o move
     return _ok(h, {"ok": True, "id": did, "choice": choice, "upstream": applied})
+
+
+def _carteiro_run(h, body: dict) -> bool:
+    """POST /api/carteiro/run — "Rodar carteiro agora". O BFF NÃO roda o drain (container
+    sem as libs da engine): TOCA `data/runs/carteiro_trigger` e o ATUADOR no host o pega
+    no próximo sweep (≤60s). Idempotente. Motor read-only (Docker :ro) → 503 honesto —
+    nunca fingimos que enfileirou (espelho de _decide/_curation_verdict)."""
+    source = str((body or {}).get("source") or "manual")[:40]
+    try:
+        res = carteiro_run.queue_run(source)
+    except OSError as e:   # inclui PermissionError — motor montado read-only
+        return _ok(h, {"ok": False, "error": "trigger_write_unavailable",
+                       "hint": "motor montado read-only — o gatilho só funciona com data/runs gravável",
+                       "detail": str(e)}, 503)
+    return _ok(h, res)
 
 
 def _curation_verdict(h, plant: str, body: dict) -> bool:
