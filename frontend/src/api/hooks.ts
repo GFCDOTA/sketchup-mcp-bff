@@ -28,6 +28,7 @@ export const qk = {
   bridgeGit: ["bridge", "git"] as const,
   bridgeSkp: ["bridge", "skp"] as const,
   curation: (plant: string) => ["curation", plant] as const,
+  decisionHistory: (limit: number) => ["decisions", "history", limit] as const,
 };
 
 type QOpts<T> = Omit<UseQueryOptions<T, Error, T>, "queryKey" | "queryFn">;
@@ -53,6 +54,11 @@ export const useArtifacts = () => useQuery({ queryKey: qk.artifacts, queryFn: ap
 
 export const useDecisions = () =>
   useQuery({ queryKey: qk.decisions, queryFn: api.decisions, refetchInterval: 6000 });
+
+/* ── Histórico do CARTEIRO (auto_decider) espelhado por arquivo ─────────────-*/
+export const useDecisionHistory = (limit = 100) =>
+  useQuery({ queryKey: qk.decisionHistory(limit), queryFn: () => api.decisionHistory(limit),
+             refetchInterval: 8000 });
 
 export const useWorkflows = () => useQuery({ queryKey: qk.workflows, queryFn: api.workflows });
 

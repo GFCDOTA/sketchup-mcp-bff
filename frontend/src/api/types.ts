@@ -784,3 +784,63 @@ export interface CurationVerdictBatchResponse {
   errors?: { variant_id: string | null; error: string }[];
   error?: string;
 }
+
+/* ─────────────── Histórico de decisões (CARTEIRO / auto_decider) — vidro do audit ─────────────── */
+
+/** Superfície da decisão — os dois tipos de proposta que o carteiro dreta. */
+export type DecisionType = "furniture_program" | "consistency_gap";
+/** Veredito objetivo do juiz (COMO resolveu). TASTE_REFUSED = gosto → a máquina se abstém. */
+export type DecisionClassification =
+  | "OBJECTIVE_STRONG_PASS" | "OBJECTIVE_STRONG_FAIL" | "BORDERLINE" | "INVALID" | "TASTE_REFUSED";
+/** O que de fato aconteceu com a proposta. */
+export type DecisionAction =
+  | "auto_approve" | "auto_reject" | "escalated_gate" | "left_pending" | "refused_taste";
+/** QUEM decidiu — o RAIL: nunca um humano. */
+export type DecidedBy = "auto_decider" | "gate_mode_b";
+
+/** Meta do gate (só quando a decisão foi escalada — mode B). */
+export interface DecisionGate {
+  trigger?: string | null;
+  status?: string | null;
+  verdict?: string | null;
+  confidence?: string | null;
+  applied?: string | null;
+}
+
+/** Um registro do audit do carteiro (decision_audit_record/1.0.0), projetado pelo mirror. */
+export interface DecisionAuditRecord {
+  decision_id: string;
+  decision_type: DecisionType | null;
+  classification: DecisionClassification | null;
+  action: DecisionAction | null;
+  confidence: number | null;
+  /** razão legível (ex.: "completude:high BANHO 01 — falta CORE: vaso") */
+  evidence: string[];
+  /** {interns, geometry_sanity, furniture_overlap} → PASS|WARN|FAIL|SKIPPED */
+  judge_verdicts: Record<string, string>;
+  gate: DecisionGate | null;
+  decided_by: DecidedBy | null;
+  corpus_version: string | null;
+  created_at: string | null;
+  /** o audit só grava decisões APLICADAS; selo defensivo */
+  dry_run: boolean;
+}
+
+/** Contagem por ação — as 5 chaves sempre presentes (zero-filled). */
+export interface DecisionCounts {
+  auto_approve: number;
+  auto_reject: number;
+  escalated_gate: number;
+  refused_taste: number;
+  left_pending: number;
+}
+
+/** GET /api/decisions/history?limit= — histórico do carteiro, mais-recente-primeiro. */
+export interface DecisionHistoryResponse {
+  live: boolean;
+  reason?: string;
+  records: DecisionAuditRecord[];
+  counts: DecisionCounts;
+  total: number;
+  source?: string;
+}

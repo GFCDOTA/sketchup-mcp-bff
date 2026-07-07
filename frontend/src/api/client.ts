@@ -12,6 +12,7 @@ import type {
   GateAccessEvent, GateStreamSeed,
   CurationResponse, CurationPlantsResponse, CurationVerdictRequest, CurationVerdictResponse,
   CurationVerdictBatchItem, CurationVerdictBatchResponse,
+  DecisionHistoryResponse,
 } from "./types";
 import { mocks } from "./mocks";
 
@@ -92,6 +93,41 @@ export const api = {
   async decisions(): Promise<DecisionsResponse> {
     if (USE_MOCKS) return delay().then(() => mocks.decisions);
     return http("/api/decisions");
+  },
+  // HISTÓRICO do CARTEIRO (auto_decider) — vidro read-only do audit.jsonl por ARQUIVO
+  async decisionHistory(limit = 100): Promise<DecisionHistoryResponse> {
+    if (USE_MOCKS) return delay().then(() => ({
+      live: true, total: 3,
+      counts: { auto_approve: 1, auto_reject: 1, escalated_gate: 1, refused_taste: 0, left_pending: 0 },
+      records: [
+        {
+          decision_id: "furniture_program_r004", decision_type: "furniture_program",
+          classification: "OBJECTIVE_STRONG_PASS", action: "auto_approve", confidence: 1.0,
+          evidence: ["interns=PASS", "geometry_sanity=PASS", "furniture_overlap=PASS"],
+          judge_verdicts: { interns: "PASS", geometry_sanity: "PASS", furniture_overlap: "PASS" },
+          gate: null, decided_by: "auto_decider", corpus_version: "unknown",
+          created_at: "2026-07-04T06:00:00Z", dry_run: false,
+        },
+        {
+          decision_id: "gap_capacidade_r004", decision_type: "consistency_gap",
+          classification: "BORDERLINE", action: "escalated_gate", confidence: 0.5,
+          evidence: ["gate: BORDERLINE — decisão objetiva delegada ao oráculo (mode B)"],
+          judge_verdicts: { interns: "WARN", geometry_sanity: "PASS", furniture_overlap: "WARN" },
+          gate: { trigger: "objective_gate_borderline", status: "ok", verdict: "VISUAL_REVIEW", confidence: "medium", applied: null },
+          decided_by: "gate_mode_b", corpus_version: "unknown",
+          created_at: "2026-07-04T05:30:00Z", dry_run: false,
+        },
+        {
+          decision_id: "furniture_program_r005", decision_type: "furniture_program",
+          classification: "OBJECTIVE_STRONG_FAIL", action: "auto_reject", confidence: 0.33,
+          evidence: ["completude:high BANHO 01 — falta CORE: vaso", "interns=FAIL"],
+          judge_verdicts: { interns: "FAIL", geometry_sanity: "PASS", furniture_overlap: "PASS" },
+          gate: null, decided_by: "auto_decider", corpus_version: "unknown",
+          created_at: "2026-07-04T05:00:00Z", dry_run: false,
+        },
+      ],
+    }) as DecisionHistoryResponse);
+    return http(`/api/decisions/history?limit=${encodeURIComponent(limit)}`);
   },
   async respondDecision(id: string, body: DecisionRespondRequest): Promise<DecisionRespondResponse> {
     if (USE_MOCKS) return delay().then(() => ({ ok: true }));

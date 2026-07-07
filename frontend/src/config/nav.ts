@@ -1,6 +1,6 @@
 // nav.ts — registro de navegação do cockpit (consolidado: 6 destinos).
 import {
-  LayoutGrid, Boxes, Inbox, Images, Map, Palette, GitBranch, Stamp, type LucideIcon,
+  LayoutGrid, Boxes, Inbox, Images, Map, Palette, GitBranch, Stamp, History, type LucideIcon,
 } from "lucide-react";
 
 export interface NavItem {
@@ -24,6 +24,7 @@ export const NAV: NavSection[] = [
       { to: "/", label: "Visão Geral", icon: LayoutGrid, end: true },
       { to: "/operacao", label: "Operação", icon: Boxes, badge: "runs" },
       { to: "/decisions", label: "Decisões", icon: Inbox, badge: "decisions" },
+      { to: "/decision-history", label: "Histórico de decisões", icon: History },
       { to: "/curation", label: "Curadoria", icon: Stamp, badge: "curation" },
       { to: "/noc", label: "NOC", icon: GitBranch },
     ],
