@@ -4,7 +4,6 @@ import { Menu, RefreshCw, Search } from "lucide-react";
 import { NAV } from "@/config/nav";
 import { useUi } from "@/store/ui";
 import { Button } from "@/components/ui/button";
-import { ConnBadge } from "./conn-badge";
 import { ThemeSwitcher } from "@/components/theme/theme-switcher";
 
 function currentLabel(pathname: string): string {
@@ -50,7 +49,6 @@ export function Topbar() {
       </Button>
 
       <ThemeSwitcher />
-      <ConnBadge />
     </header>
   );
 }
