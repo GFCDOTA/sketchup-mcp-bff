@@ -27,6 +27,7 @@ services:
       BFF_HOST: "0.0.0.0"
       BFF_MOCK: "${BFF_MOCK:-0}"                         # 1 = serve mocks/state.sample.json
       BFF_OLLAMA: "http://host.docker.internal:11434"    # Ollama do HOST
+      BFF_GPT_DOCKER: "http://host.docker.internal:8899"  # oráculo GPT-no-Docker (ops/gpt-docker)
       BFF_ENGINE_ROOT: "/repos/sketchup-mcp"             # studio_mirror + Live System Map leem daqui
     volumes:
       # motor READ-ONLY — studio_mirror/scanner leem a árvore real do repo; a única
