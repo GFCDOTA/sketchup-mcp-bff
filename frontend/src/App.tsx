@@ -6,7 +6,6 @@ import Overview from "@/screens/overview";
 import Operacao from "@/screens/operacao";
 import RunDetail from "@/screens/run-detail";
 import Decisions from "@/screens/decisions";
-import DecisionHistory from "@/screens/decision-history";
 import Curation from "@/screens/curation";
 import Artifacts from "@/screens/artifacts";
 import NocLedger from "@/screens/noc-ledger";
@@ -27,7 +26,6 @@ export default function App() {
         <Route path="/operacao" element={<Operacao />} />
         <Route path="/runs/:id" element={<RunDetail />} />
         <Route path="/decisions" element={<Decisions />} />
-        <Route path="/decision-history" element={<DecisionHistory />} />
         <Route path="/curation" element={<Curation />} />
         <Route path="/noc" element={<NocLedger />} />
         <Route path="/artifacts" element={<Artifacts />} />
@@ -35,6 +33,7 @@ export default function App() {
         <Route path="/theme-lab" element={lazyEl(<ThemeLab />)} />
 
         {/* redirects das rotas antigas → Operação (abas) / Como Funciona */}
+        <Route path="/decision-history" element={<Navigate to="/decisions" replace />} />
         <Route path="/agents" element={<Navigate to="/operacao?tab=agentes" replace />} />
         <Route path="/runs" element={<Navigate to="/operacao?tab=runs" replace />} />
         <Route path="/workflows" element={<Navigate to="/operacao?tab=workflows" replace />} />
