@@ -49,6 +49,9 @@ import decision_history_mirror as decision_history  # CARTEIRO — audit das dec
 import carteiro_run_mirror as carteiro_run  # CARTEIRO — gatilho (write) + acionamentos (vidro)
 
 OLLAMA = os.environ.get("BFF_OLLAMA", "http://127.0.0.1:11434").rstrip("/")
+# Oráculo GPT-no-Docker (ChatGPT logado num Chrome containerizado — ops/gpt-docker).
+# No container o host resolve via host.docker.internal (mesmo padrão do Ollama).
+GPT_DOCKER = os.environ.get("BFF_GPT_DOCKER", "http://host.docker.internal:8899").rstrip("/")
 MAX_BODY = 1 << 20  # 1 MiB — teto de corpo de POST (anti-DoS)
 # modo MOCK do /api/state (migrou do proxy do server.py — o dispatch nativo o sombrearia)
 _MOCK = os.environ.get("BFF_MOCK", "") not in ("", "0", "false", "False")
@@ -208,6 +211,7 @@ _AGENT_META = {
     "ollama-qwen": ("LLM", "qwen2.5-coder:7b", ["code"]),
     "ollama-deepseek": ("LLM", "deepseek-r1:14b", ["reason"]),
     "gpt-visual": ("Visão", "gpt-4o", ["vision", "judge"]),
+    "gpt-docker": ("GPT-Docker", "ChatGPT (web, logado no Chrome do Docker)", ["ask", "oracle"]),
 }
 
 # Time canônico do estúdio (líderes) — SEMPRE presente, mesmo sem o state espelhado.
@@ -237,6 +241,29 @@ def _canonical_agents() -> list[dict]:
     return out
 
 
+def _gpt_docker_agent() -> dict:
+    """Card do oráculo GPT-no-Docker (ops/gpt-docker): ChatGPT logado num Chrome
+    dentro de um container, falável por HTTP. 'online' = bridge no ar E logado (só
+    aí responde a /ask). Probe REAL do /health; qualquer erro vira card offline —
+    NUNCA derruba /api/agents."""
+    role, model, tools = _AGENT_META["gpt-docker"]
+    reachable = logged_in = False
+    try:
+        with urlopen(GPT_DOCKER + "/health", timeout=2.0) as r:
+            data = json.loads(r.read())
+        reachable = bool(data.get("ok"))
+        logged_in = bool(data.get("logged_in"))
+    except (URLError, HTTPError, OSError, json.JSONDecodeError):
+        pass
+    online = reachable and logged_in
+    msg = ("logado no ChatGPT — pronto pra /ask" if online
+           else "bridge no ar, ChatGPT deslogado — abra o noVNC (:7900)" if reachable
+           else "container gpt-chrome-bridge offline (ops/gpt-docker: docker compose up -d)")
+    return {"id": "gpt-docker", "name": "GPT-Docker", "role": role, "umbrella": "Oráculos",
+            "status": "online" if online else "idle", "online": online,
+            "model": model, "tools": tools, "message": msg, "source": "docker"}
+
+
 def _derive_agents(state: dict) -> list[dict]:
     out = []
     if _gate("derive:agents", 4.0):
@@ -247,6 +274,8 @@ def _derive_agents(state: dict) -> list[dict]:
             if not card:
                 continue
             aid = card.get("id", "")
+            if aid == "gpt-visual":  # aposentado: o gpt-docker (oráculo GPT real) o substituiu
+                continue
             role, model, tools = _AGENT_META.get(aid, (u.get("label", "agent"), None, ["chat"]))
             # normaliza o status legado para o union do contrato {idle,working,error,online}
             raw = str(card.get("status") or "idle").lower()
@@ -259,7 +288,9 @@ def _derive_agents(state: dict) -> list[dict]:
                         "online": bool(card.get("online")), "tools": tools,
                         "message": None if card.get("message") in (None, "—") else card.get("message")})
     # sem state espelhado (ou sem agentes nele) → time canônico com status real do Ollama
-    return out or _canonical_agents()
+    agents = out or _canonical_agents()
+    agents.append(_gpt_docker_agent())  # oráculo GPT-no-Docker — sempre no roster, status REAL
+    return agents
 
 
 def _derive_workflows(state: dict) -> list[dict]:
@@ -309,14 +340,29 @@ def _derive_decisions(state: dict) -> list[dict]:
         fa.emit("sketchup-mcp-bff/cockpit_api.py", "execute", "bff", endpoint="/api/decisions",
                 label="derive decisions (propostas + visual review)")
     for p in (state.get("proposals", {}) or {}).get("pending", []) or []:
+        ptype = str(p.get("type") or "")
+        room = p.get("room_name") or p.get("room_id") or ""
         # items reais podem ser dicts ({asset:...}) OU strings (gaps do Auditor)
         items = ", ".join(i.get("asset", "") if isinstance(i, dict) else str(i)
                           for i in (p.get("items") or [])[:4])
-        out.append({"id": p.get("id"), "type": "program_proposal",
-                    "title": f"Programa · {p.get('room_name', p.get('room_id', ''))}",
-                    "question": f"Aprovar o programa proposto ({items})?",
-                    "options": ["Aprovar", "Rejeitar"], "status": "pending",
-                    "source": p.get("source_worker") or "Arquiteto", "createdAt": _now()})
+        # rótulo HONESTO por tipo: um consistency_gap NÃO é um "Programa" (o rótulo
+        # antigo chamava tudo de "Programa ·" e confundia — gap ≠ programa de móveis).
+        if ptype == "consistency_gap":
+            decision = {"type": "consistency_gap",
+                        "title": p.get("title") or f"Gap · {room}",
+                        "question": p.get("detail") or f"Aprovar esta correção em {room}?"}
+        elif ptype == "furniture_program":
+            decision = {"type": "furniture_program",
+                        "title": f"Programa · {room}",
+                        "question": f"Aprovar o programa proposto ({items})?"}
+        else:  # tipo desconhecido — honesto, sem inventar rótulo de "programa"
+            decision = {"type": ptype or "proposta",
+                        "title": p.get("title") or f"Proposta · {room}",
+                        "question": p.get("detail") or "Aprovar esta proposta?"}
+        out.append({"id": p.get("id"), "status": "pending",
+                    "options": ["Aprovar", "Rejeitar"],
+                    "source": p.get("source_worker") or "Arquiteto",
+                    "createdAt": _now(), **decision})
     consult = state.get("consult", {}) or {}
     if consult.get("status") == "waiting_gpt_answer":
         out.append({"id": "visual-review", "type": "visual_review",
