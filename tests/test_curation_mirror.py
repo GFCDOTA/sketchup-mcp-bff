@@ -156,6 +156,34 @@ class CurationMirrorTest(unittest.TestCase):
         # 1 CANDIDATE sem veredito humano = 1 aguardando o Felipe
         self.assertEqual(self.cm.curation_view(PLANT)["awaiting_human"], 1)
 
+    # ── laço autônomo: sidecars curation_status.jsonl + gpt_reviews.jsonl ──────
+    def test_curation_review_sidecars_fused_last_wins(self):
+        """O status vivo do card + a nota/crítica do GPT vêm dos 2 sidecars do
+        curation_review (motor), fundidos last-wins IGUAL ao human_verdicts;
+        item sem sidecar → campos None (degrade honesto)."""
+        d = self.root / PLANT
+        status, review = d / "curation_status.jsonl", d / "gpt_reviews.jsonl"
+        # em_analise → revisado no V1: o ÚLTIMO vence (last-wins por ordem de arquivo)
+        status.write_text(
+            json.dumps({"variant_id": V1, "status": "em_analise", "t": 1.0}) + "\n"
+            + json.dumps({"variant_id": V1, "status": "revisado", "t": 2.0,
+                          "detail": "nota 4/10"}) + "\n", "utf-8")
+        review.write_text(
+            json.dumps({"variant_id": V1, "nota": 4, "porque": "luz estourada",
+                        "caminho_pro_10": "1) baixa a exposição", "t": 2.0}) + "\n", "utf-8")
+        try:
+            by = {x["variant_id"]: x for x in self.cm.curation_view(PLANT)["variants"]}
+            self.assertEqual(by[V1]["analysis_status"], "revisado")
+            self.assertEqual(by[V1]["analysis_detail"], "nota 4/10")
+            self.assertEqual(by[V1]["gpt_nota"], 4)
+            self.assertEqual(by[V1]["gpt_porque"], "luz estourada")
+            self.assertIn("baixa a exposição", by[V1]["gpt_caminho"])
+            self.assertIsNone(by[V2]["analysis_status"])   # sem sidecar → None honesto
+            self.assertIsNone(by[V2]["gpt_nota"])
+        finally:
+            status.unlink(missing_ok=True)
+            review.unlink(missing_ok=True)
+
     def test_record_human_verdict_appends_and_never_touches_corpus(self):
         corpus = self.root / PLANT / "corpus.jsonl"
         hv = self.root / PLANT / "human_verdicts.jsonl"

@@ -118,7 +118,8 @@ def plants_view() -> dict:
     return {"plants": plants, "root": str(root)}
 
 
-def _variant_summary(plant: str, rec: dict, revisions: int, human: dict | None) -> dict:
+def _variant_summary(plant: str, rec: dict, revisions: int, human: dict | None,
+                     status: dict | None = None, review: dict | None = None) -> dict:
     vf = rec.get("visual_findings") or {}
     params = rec.get("params") or {}
     geo = rec.get("geometry") or {}
@@ -126,6 +127,8 @@ def _variant_summary(plant: str, rec: dict, revisions: int, human: dict | None) 
     iso = rr.get("iso")
     vid = str(rec.get("variant_id") or "")
     axes = vf.get("axes") or {}
+    st = status or {}
+    rv = review or {}
     return {
         "variant_id": vid,
         "created_at": rec.get("created_at"),
@@ -148,6 +151,16 @@ def _variant_summary(plant: str, rec: dict, revisions: int, human: dict | None) 
         "promotion_note": vf.get("promotion_note"),
         "revisions": revisions,
         "human_verdict": human,
+        # laço autônomo de revisão (curation_review no motor): status VIVO do card
+        # (na_fila|em_analise|revisado|corrigindo|concluido|aguardando_felipe|
+        # oraculo_offline) + a nota/crítica do GPT-no-Docker. Ausente → None honesto.
+        "analysis_status": st.get("status"),
+        "analysis_detail": st.get("detail"),
+        "analysis_t": st.get("t"),
+        "gpt_nota": rv.get("nota"),
+        "gpt_porque": rv.get("porque"),
+        "gpt_caminho": rv.get("caminho_pro_10"),
+        "gpt_reviewed_at": rv.get("t"),
     }
 
 
@@ -197,6 +210,10 @@ def curation_view(plant: str) -> dict:
                 "variants": [], "patterns": _aggregate_patterns([]), "counts": {}, "themes": []}
     by, seen = _last_wins(recs)
     hv_by, _ = _last_wins(_read_jsonl_all(d / "human_verdicts.jsonl"))
+    # sidecars do laço autônomo (curation_review no motor, MESMO dir) — last-wins,
+    # idêntico ao merge do human_verdicts. Ausentes → mapas vazios (degrade honesto).
+    status_by, _ = _last_wins(_read_jsonl_all(d / "curation_status.jsonl"))
+    review_by, _ = _last_wins(_read_jsonl_all(d / "gpt_reviews.jsonl"))
 
     variants = []
     for vid, rec in by.items():
@@ -210,7 +227,9 @@ def curation_view(plant: str) -> dict:
         elif isinstance(rec.get("human_verdict"), (dict, str)) and rec.get("human_verdict"):
             # inline no corpus (shape livre do schema) — o jsonl do clique tem precedência
             human = {"verdict": None, "note": "", "t": None, "inline": rec["human_verdict"]}
-        variants.append(_variant_summary(plant, rec, seen[vid], human))
+        variants.append(_variant_summary(plant, rec, seen[vid], human,
+                                         status=status_by.get(vid),
+                                         review=review_by.get(vid)))
     variants.sort(key=lambda v: v.get("created_at") or "", reverse=True)
 
     counts: dict[str, int] = {}

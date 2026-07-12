@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState, ErrorState } from "@/components/states";
 import { SkeletonText } from "@/components/ui/skeleton";
 import { staggerContainer, staggerItem } from "@/components/flow/animated-section";
+import { GptReviewBadge } from "@/components/gpt-review-badge";
 import { cn } from "@/lib/utils";
 
 /* verdicts da MÁQUINA (CANDIDATE|FAIL|PENDING_VISION) — cores próprias */
@@ -356,6 +357,9 @@ function VariantCard({ v, plant, onZoom, selected, onToggleSelect }: {
       )}
 
       <div className="space-y-2.5 p-3">
+        {/* laço autônomo de revisão: status VIVO (em análise/revisado/corrigindo) +
+            nota/crítica do GPT-no-Docker. Só aparece quando o item passou pelo laço. */}
+        <GptReviewBadge v={v} />
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge variant={MACHINE_BADGE[v.verdict] ?? "outline"}>{v.verdict}</Badge>
           {v.discriminated && <Badge variant="purple">DISCRIMINATED</Badge>}

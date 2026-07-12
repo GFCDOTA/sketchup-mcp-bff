@@ -650,6 +650,11 @@ export interface BridgeSkp {
 
 /** Verdict da MÁQUINA sobre uma variante — NUNCA IMPROVED/SAME/WORSE (esses são exclusivos do humano). */
 export type MachineVerdict = "CANDIDATE" | "FAIL" | "PENDING_VISION";
+
+/** Status VIVO do laço autônomo de revisão (curation_review no motor). */
+export type CurationAnalysisStatus =
+  | "na_fila" | "em_analise" | "revisado" | "corrigindo"
+  | "concluido" | "aguardando_felipe" | "oraculo_offline";
 /** Verdict do HUMANO (Felipe) — só nasce de clique na tela de curadoria. */
 export type HumanVerdictValue = "IMPROVED" | "SAME" | "WORSE";
 export type GateVerdict = "PASS" | "WARN" | "FAIL";
@@ -701,6 +706,16 @@ export interface CurationVariant {
   /** nº de appends no corpus (transparência do upgrade PENDING_VISION→CANDIDATE) */
   revisions: number;
   human_verdict: HumanVerdict | null;
+  /** laço autônomo de revisão: status VIVO do card + nota/crítica do GPT-no-Docker.
+   *  Opcional/null quando o item ainda não passou pelo laço (degrade honesto; o
+   *  mirror sempre emite os campos, mocks antigos podem omiti-los). */
+  analysis_status?: CurationAnalysisStatus | null;
+  analysis_detail?: string | null;
+  analysis_t?: number | null;
+  gpt_nota?: number | null;
+  gpt_porque?: string | null;
+  gpt_caminho?: string | null;
+  gpt_reviewed_at?: number | null;
 }
 
 /** Agregação de um pattern por todo o corpus (Fatia 3 — "o que já aprendemos"). */
