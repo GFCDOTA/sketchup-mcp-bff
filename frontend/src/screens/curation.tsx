@@ -42,6 +42,37 @@ const AXIS_DOT: Record<string, string> = {
   PASS: "bg-ok", WARN: "bg-warn", FAIL: "bg-danger",
 };
 
+/* agrupa variantes por ASSINATURA DE ERRO (eixos em FAIL, senão WARN) — o Felipe
+   ataca "tudo do mesmo erro de uma vez". FAIL primeiro, depois WARN, sem-erro,
+   e por último as que ainda aguardam o painel de visão. */
+type ErrorGroup = { key: string; label: string; dot: string; variants: CurationVariant[] };
+function groupByError(variants: CurationVariant[]): ErrorGroup[] {
+  const meta = (v: CurationVariant) => {
+    if (v.verdict === "PENDING_VISION")
+      return { key: "z_pending", label: "Aguardando o painel de visão", dot: "bg-info", rank: 4 };
+    const pick = (verdict: string) =>
+      Object.entries(v.axes).filter(([, a]) => a?.verdict === verdict)
+        .map(([ax]) => AXIS_SHORT[ax] ?? ax).sort();
+    const fails = pick("FAIL");
+    if (fails.length)
+      return { key: `a_fail:${fails.join(",")}`, label: `Erro: ${fails.join(" + ")}`, dot: "bg-danger", rank: 0 };
+    const warns = pick("WARN");
+    if (warns.length)
+      return { key: `b_warn:${warns.join(",")}`, label: `Atenção: ${warns.join(" + ")}`, dot: "bg-warn", rank: 1 };
+    return { key: "c_ok", label: "Sem erro detectado", dot: "bg-ok", rank: 2 };
+  };
+  const byKey = new Map<string, ErrorGroup & { rank: number }>();
+  for (const v of variants) {
+    const m = meta(v);
+    let g = byKey.get(m.key);
+    if (!g) { g = { key: m.key, label: m.label, dot: m.dot, variants: [], rank: m.rank }; byKey.set(m.key, g); }
+    g.variants.push(v);
+  }
+  return [...byKey.values()]
+    .sort((a, b) => a.rank - b.rank || b.variants.length - a.variants.length)
+    .map(({ rank: _rank, ...g }) => g);
+}
+
 export default function Curation() {
   const plant = DEFAULT_PLANT;
   const { data, isLoading, isError, error } = useCuration(plant);
@@ -73,6 +104,13 @@ export default function Curation() {
       judgeableVisible.forEach((v) => allSelected ? next.delete(v.variant_id) : next.add(v.variant_id));
       return next;
     });
+  // seleciona o GRUPO DE ERRO inteiro (só as julgáveis) — atacar tudo do mesmo erro de uma vez
+  const selectGroup = (g: ErrorGroup) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      g.variants.filter((v) => v.verdict !== "PENDING_VISION").forEach((v) => next.add(v.variant_id));
+      return next;
+    });
   // pós-lote: mantém só as que FALHARAM selecionadas (reenvio); sucesso total fecha a barra
   const onBatchApplied = (res: CurationVerdictBatchResponse) => {
     setLastBatch(res);
@@ -98,9 +136,8 @@ export default function Curation() {
           sub={data?.reason ?? "o loop autônomo ainda não produziu variantes"} /></Card>
       ) : (
         <div className="space-y-4">
-          {/* Fatia 3 — memória de design visível antes do RAG (FP-035) existir */}
-          <PatternsCard patterns={data.patterns} />
-
+          {/* fotos em EVIDÊNCIA no topo (pedido do Felipe): filtros + grid agrupado por
+              erro; a memória de design desce recolhida pro rodapé. */}
           {/* filtros por verdict máquina e por tema (kickoff, Fatia 1) */}
           <div className="flex flex-wrap items-center gap-2">
             <FilterChips
@@ -147,16 +184,40 @@ export default function Curation() {
           {variants.length === 0 ? (
             <Card><EmptyState icon={Stamp} title="Nada nesse filtro" /></Card>
           ) : (
-            <motion.div variants={staggerContainer} initial="hidden" animate="show"
-              className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {variants.map((v) => (
-                <motion.div key={v.variant_id} variants={staggerItem}>
-                  <VariantCard v={v} plant={plant} onZoom={setZoom}
-                    selected={selected.has(v.variant_id)} onToggleSelect={toggleSelect} />
-                </motion.div>
-              ))}
-            </motion.div>
+            <div className="space-y-6">
+              {groupByError(variants).map((g) => {
+                const judgeable = g.variants.filter((v) => v.verdict !== "PENDING_VISION");
+                return (
+                  <div key={g.key} className="space-y-2">
+                    <div className="flex items-center gap-2 border-b border-border/50 pb-1">
+                      <span className={cn("size-2 shrink-0 rounded-full", g.dot)} />
+                      <h3 className="text-sm font-semibold">{g.label}</h3>
+                      <Badge variant="outline">{g.variants.length}</Badge>
+                      {judgeable.length > 0 && (
+                        <Button variant="ghost" size="sm" className="ml-auto h-6 text-[11px]"
+                          onClick={() => selectGroup(g)}>
+                          <ListChecks className="mr-1 size-3.5" />
+                          selecionar grupo ({judgeable.length})
+                        </Button>
+                      )}
+                    </div>
+                    <motion.div variants={staggerContainer} initial="hidden" animate="show"
+                      className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {g.variants.map((v) => (
+                        <motion.div key={v.variant_id} variants={staggerItem}>
+                          <VariantCard v={v} plant={plant} onZoom={setZoom}
+                            selected={selected.has(v.variant_id)} onToggleSelect={toggleSelect} />
+                        </motion.div>
+                      ))}
+                    </motion.div>
+                  </div>
+                );
+              })}
+            </div>
           )}
+
+          {/* memória de design — RECOLHIDA, no rodapé (fotos em evidência no topo) */}
+          <PatternsCard patterns={data.patterns} />
         </div>
       )}
 
@@ -202,7 +263,7 @@ function FilterChips({ value, onChange, options }: {
 
 /* ── Fatia 3: "o que já aprendemos" ─────────────────────────────────────────*/
 function PatternsCard({ patterns }: { patterns: { total: number; works: number; fails: number; neutral: number; patterns: PatternAgg[] } }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);   // recolhida por padrão (rodapé) — fotos em evidência no topo
   if (patterns.total === 0) return null;
   return (
     <Card accent="purple">
