@@ -66,8 +66,13 @@ function Banner({ data }: { data: NonNullable<ReturnType<typeof useHoje>["data"]
       </span>
       {esperando > 0 && (
         <Link to="/curation"
-          className="ml-auto rounded-full border border-primary/40 bg-primary/15 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/25">
-          {esperando} decisão(ões) esperando você →
+          className="ml-auto rounded-full border border-primary/40 bg-primary/15 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/25"
+          title={a.esperando_breakdown
+            ? `${a.esperando_breakdown.gosto} veredito(s) de gosto · ${a.esperando_breakdown.decisao} decisão(ões)`
+            : undefined}>
+          {esperando} esperando você
+          {a.esperando_breakdown &&
+            ` (${a.esperando_breakdown.gosto} veredito(s) · ${a.esperando_breakdown.decisao} decisão(ões))`} →
         </Link>
       )}
     </div>
@@ -185,9 +190,10 @@ export default function Hoje() {
                   <CardEyebrow>só o que exige humano</CardEyebrow>
                   <CardTitle className="flex items-center gap-2 text-sm">
                     <InboxIcon className="size-4 text-primary" /> Precisa de você
-                    {data.inbox.length > 0 && (
-                      <span className="ml-auto rounded-full bg-primary/15 px-2 py-0.5 font-mono text-xs font-bold text-primary">
-                        {data.inbox.length}
+                    {data.autonomy.n_esperando_voce > 0 && (
+                      <span className="ml-auto rounded-full bg-primary/15 px-2 py-0.5 font-mono text-xs font-bold text-primary"
+                        title="mesma conta do banner — total de itens esperando sua decisão">
+                        {data.autonomy.n_esperando_voce}
                       </span>
                     )}
                   </CardTitle>

@@ -65,7 +65,12 @@ export function PresenceStrip() {
           );
         })
       )}
-      <span className="ml-auto text-[11px] text-muted-foreground/50">{online}/{agentList.length} online</span>
+      {/* contador honesto (crítica do GPT): agente local desligado não é falha —
+          é SOB DEMANDA. "1/7 online" lia como sistema quebrado ao lado de
+          "Sistema normal"; agora diz o que de fato acontece. */}
+      <span className="ml-auto text-[11px] text-muted-foreground/50">
+        {online} no ar · {Math.max(0, agentList.length - online)} sob demanda
+      </span>
     </div>
   );
 }

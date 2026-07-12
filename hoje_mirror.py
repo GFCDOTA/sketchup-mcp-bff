@@ -25,6 +25,11 @@ import noc_mirror
 # terminar bem — o load_ledger já é last-wins por task_id, então basta olhar o último)
 FAIL_STATUSES = {"VERIFY_FAILED", "WT_ADD_FAILED", "PUSH_FAILED"}
 
+# statuses TERMINAIS do dispatcher (lockstep com noc_dispatcher.TERMINAL_STATUSES —
+# o BFF não importa o motor): task da fila com um destes no ledger não re-roda.
+TERMINAL_STATUSES = {"COMMITTED", "VISUAL_REVIEW_QUEUED", "NOOP", "VERIFY_FAILED",
+                     "LOCAL_LLM_DONE", "LOCAL_LLM_OFFLINE", "SKIPPED_PURPOSE_NOT_ALLOWED"}
+
 RODANDO_S = 20 * 60      # última atividade < 20min → sistema RODANDO (tick ~15min)
 QUIETO_S = 2 * 3600      # < 2h → QUIETO; além disso → PARADO
 BLOQUEIO_JANELA_S = 24 * 3600
@@ -36,6 +41,43 @@ ET_BLOQUEADO = "BLOQUEADO"
 
 def _num(v) -> float | None:
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def _queue_pending() -> int:
+    """Pendência REAL da fila: id em queue.jsonl SEM status terminal no ledger.
+    (A aproximação linhas−tasks contava histórico como pendente — contador
+    impreciso destrói confiança, crítica do GPT.)"""
+    import json
+    import os
+    from pathlib import Path
+    noc = Path(os.environ.get("BFF_NOC_ROOT",
+                              str(__import__("file_activity").ENGINE_ROOT / ".ai_bridge" / "noc")))
+    done: set[str] = set()
+    try:
+        for ln in (noc / "actions.jsonl").read_text("utf-8", errors="replace").splitlines():
+            try:
+                r = json.loads(ln)
+            except ValueError:
+                continue
+            if r.get("status") in TERMINAL_STATUSES:
+                done.add(str(r.get("task_id") or r.get("id") or ""))
+    except OSError:
+        pass
+    pending = 0
+    try:
+        seen: set[str] = set()
+        for ln in (noc / "queue.jsonl").read_text("utf-8", errors="replace").splitlines():
+            try:
+                t = json.loads(ln)
+            except ValueError:
+                continue
+            tid = str(t.get("id") or "")
+            if tid and tid not in seen and t.get("safe", True) and tid not in done:
+                pending += 1
+            seen.add(tid)
+    except OSError:
+        pass
+    return pending
 
 
 def _last_activity_ts(cur: dict, runs: dict, ledger: dict) -> float | None:
@@ -180,15 +222,17 @@ def hoje_view(decisions: list[dict] | None = None, plant: str = "planta_74",
     ledger = noc_mirror.load_ledger(80)
     lock = noc_mirror.lock_state()
     runs = carteiro.runs_view(5)
-    status = noc_mirror.status_view()
-    # pendente na fila = linhas da fila − tasks com status terminal não é derivável
-    # aqui sem o motor; aproximação honesta: fila conta linhas, o ledger conta tasks.
-    queue_pending = max(0, int(status.get("queueCount") or 0) - int(status.get("taskCount") or 0))
+    queue_pending = _queue_pending()
 
     autonomy = _autonomy_block(cur, runs, ledger, lock, now)
     missions = _missions_block(cur, queue_pending)
     inbox = _inbox_block(cur, decisions)
-    autonomy["n_esperando_voce"] = sum(int(i.get("n") or 0) for i in inbox)
+    # UM total, decomposto (crítica do GPT: contador do chip ≠ contador da lateral
+    # destrói confiança — o front mostra a MESMA soma nos dois lugares)
+    n_gosto = sum(int(i.get("n") or 0) for i in inbox if i.get("tipo") == "gosto")
+    n_decisao = sum(int(i.get("n") or 0) for i in inbox if i.get("tipo") == "decisao")
+    autonomy["n_esperando_voce"] = n_gosto + n_decisao
+    autonomy["esperando_breakdown"] = {"gosto": n_gosto, "decisao": n_decisao}
     if autonomy["n_bloqueios"] > 0:
         # bloqueio rebaixa o estado do banner (exceção é o que importa)
         autonomy["estado_banner"] = "BLOQUEIOS"

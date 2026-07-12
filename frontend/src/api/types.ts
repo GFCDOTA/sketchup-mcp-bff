@@ -759,6 +759,8 @@ export interface HojeAutonomy {
   bloqueios: HojeBloqueio[];
   n_bloqueios: number;
   n_esperando_voce: number;
+  /** decomposição do total (chip e lateral mostram a MESMA conta) */
+  esperando_breakdown?: { gosto: number; decisao: number };
 }
 
 export interface HojeMission {
