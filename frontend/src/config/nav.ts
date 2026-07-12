@@ -21,7 +21,7 @@ export const NAV: NavSection[] = [
   {
     title: "Cockpit",
     items: [
-      { to: "/", label: "Visão Geral", icon: LayoutGrid, end: true },
+      { to: "/", label: "Hoje", icon: LayoutGrid, end: true },
       { to: "/operacao", label: "Operação", icon: Boxes, badge: "runs" },
       { to: "/decisions", label: "Decisões", icon: Inbox, badge: "decisions" },
       { to: "/curation", label: "Curadoria", icon: Stamp, badge: "curation" },

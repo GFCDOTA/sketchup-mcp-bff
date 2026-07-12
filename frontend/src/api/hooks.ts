@@ -109,6 +109,10 @@ export const useCuration = (plant: string) =>
   useQuery({ queryKey: qk.curation(plant), queryFn: () => api.curation(plant),
              enabled: !!plant, refetchInterval: 6000 });
 
+/* HOJE: a home orientada a excecoes (autonomia + missoes + inbox) */
+export const useHoje = () =>
+  useQuery({ queryKey: ["hoje"] as const, queryFn: api.hoje, refetchInterval: 6000 });
+
 export function useCurationVerdict(plant: string) {
   const qc = useQueryClient();
   return useMutation({

@@ -2,7 +2,7 @@ import { lazy, Suspense } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { AppShell } from "@/components/shell/app-shell";
 import { LoadingState } from "@/components/states";
-import Overview from "@/screens/overview";
+import Hoje from "@/screens/hoje";
 import Operacao from "@/screens/operacao";
 import RunDetail from "@/screens/run-detail";
 import Decisions from "@/screens/decisions";
@@ -22,7 +22,7 @@ export default function App() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route path="/" element={<Overview />} />
+        <Route path="/" element={<Hoje />} />
         <Route path="/operacao" element={<Operacao />} />
         <Route path="/runs/:id" element={<RunDetail />} />
         <Route path="/decisions" element={<Decisions />} />

@@ -47,6 +47,7 @@ import studio_mirror as studio  # ESTUDIO/:8781 mirror — o /api/state inteiro 
 import curation_mirror as curation  # CURADORIA — corpus julgado do sweep + veredito humano
 import decision_history_mirror as decision_history  # CARTEIRO — audit das decisões objetivas (vidro)
 import carteiro_run_mirror as carteiro_run  # CARTEIRO — gatilho (write) + acionamentos (vidro)
+import hoje_mirror as hoje  # HOJE — central de trabalho: autonomia + missões + inbox (vidro)
 
 OLLAMA = os.environ.get("BFF_OLLAMA", "http://127.0.0.1:11434").rstrip("/")
 # Oráculo GPT-no-Docker (ChatGPT logado num Chrome containerizado — ops/gpt-docker).
@@ -575,6 +576,9 @@ def dispatch(h) -> bool:
         return _ok(h, {"artifacts": _derive_artifacts(_upstream_state())})
     if method == "GET" and path == "/api/decisions":
         return _ok(h, {"decisions": _derive_decisions(_upstream_state())})
+    # HOJE — a home orientada a exceções (autonomia + missões + inbox)
+    if method == "GET" and path == "/api/hoje":
+        return _ok(h, hoje.hoje_view(decisions=_derive_decisions(_upstream_state())))
     # HISTÓRICO do CARTEIRO (auto_decider) — vidro read-only do audit.jsonl por ARQUIVO
     if method == "GET" and path == "/api/decisions/history":
         lim = _q_int(query, "limit", 100, 1, 1000)

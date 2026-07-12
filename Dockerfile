@@ -24,7 +24,7 @@ WORKDIR /app
 
 # código do BFF + fonte do frontend (para o scanner do Live System Map enxergar a
 # árvore real do repo) — node_modules/dist ficam fora via .dockerignore.
-COPY server.py cockpit_api.py file_activity.py noc_mirror.py bridge_mirror.py studio_mirror.py curation_mirror.py decision_history_mirror.py carteiro_run_mirror.py README.md ./
+COPY server.py cockpit_api.py file_activity.py noc_mirror.py bridge_mirror.py studio_mirror.py curation_mirror.py decision_history_mirror.py carteiro_run_mirror.py hoje_mirror.py README.md ./
 COPY mocks/ ./mocks/
 COPY docs/ ./docs/
 COPY frontend/ ./frontend/

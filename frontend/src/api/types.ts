@@ -738,6 +738,61 @@ export interface CurationAutonomy {
   last_t: number | null;
 }
 
+/* ── HOJE — central de trabalho orientada a exceções (design GPT 2026-07-12) ── */
+
+/** Quem age agora — a etiqueta que separa autônomo de humano em TODO item. */
+export type HojeEtiqueta = "SISTEMA_AGINDO" | "ESPERA_VOCE" | "BLOQUEADO";
+
+export interface HojeBloqueio {
+  task_id: string | null;
+  titulo: string;
+  status: string;
+  quando: number | null;
+}
+
+export interface HojeAutonomy {
+  estado: "RODANDO" | "QUIETO" | "PARADO";
+  estado_banner: "NORMAL" | "BLOQUEIOS" | "QUIETO" | "PARADO";
+  ultima_atividade: number | null;
+  proximo_ciclo_s: number | null;
+  atuador_vivo: boolean;
+  bloqueios: HojeBloqueio[];
+  n_bloqueios: number;
+  n_esperando_voce: number;
+}
+
+export interface HojeMission {
+  plant: string;
+  tema: string | null;
+  titulo: string;
+  etiqueta: HojeEtiqueta;
+  n_variantes: number | null;
+  melhor_nota: number | null;
+  n_esperando_voce: number;
+  n_em_revisao: number;
+  proxima_acao: string;
+}
+
+export interface HojeInboxItem {
+  tipo: "gosto" | "decisao";
+  titulo: string;
+  detalhe: string;
+  n: number;
+  rota: string;
+  plant?: string;
+  tema?: string;
+  id?: string | null;
+}
+
+export interface HojeResponse {
+  live: boolean;
+  plant: string;
+  autonomy: HojeAutonomy;
+  missions: HojeMission[];
+  inbox: HojeInboxItem[];
+  generated_at: number;
+}
+
 /** Agregação de um pattern por todo o corpus (Fatia 3 — "o que já aprendemos"). */
 export interface PatternAgg {
   pattern: string;

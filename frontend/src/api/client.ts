@@ -13,6 +13,7 @@ import type {
   CurationResponse, CurationPlantsResponse, CurationVerdictRequest, CurationVerdictResponse,
   CurationVerdictBatchItem, CurationVerdictBatchResponse,
   DecisionHistoryResponse, CarteiroRunsResponse, CarteiroRunResponse,
+  HojeResponse,
 } from "./types";
 import { mocks } from "./mocks";
 
@@ -247,6 +248,22 @@ export const api = {
   async curationPlants(): Promise<CurationPlantsResponse> {
     if (USE_MOCKS) return delay().then(() => ({ plants: ["planta_74"], root: "(mock)" }));
     return http("/api/curation/plants");
+  },
+  // HOJE — home orientada a exceções (autonomia + missões + inbox)
+  async hoje(): Promise<HojeResponse> {
+    if (USE_MOCKS) return delay().then(() => ({
+      live: true, plant: DEFAULT_PLANT,
+      autonomy: { estado: "RODANDO", estado_banner: "NORMAL", ultima_atividade: Date.now() / 1000 - 300,
+                  proximo_ciclo_s: 600, atuador_vivo: true, bloqueios: [], n_bloqueios: 0,
+                  n_esperando_voce: 2 },
+      missions: [{ plant: DEFAULT_PLANT, tema: "warm_compact", titulo: `${DEFAULT_PLANT} · warm_compact`,
+                   etiqueta: "ESPERA_VOCE", n_variantes: 2, melhor_nota: 4, n_esperando_voce: 2,
+                   n_em_revisao: 0, proxima_acao: "você dá o veredito em 2 variante(s)" }],
+      inbox: [{ tipo: "gosto", titulo: "Dar seu veredito em 2 variante(s) — warm_compact",
+                detalhe: "IMPROVED / SAME / WORSE", n: 2, rota: "/curation" }],
+      generated_at: Date.now() / 1000,
+    }) as HojeResponse);
+    return http("/api/hoje");
   },
   // o CLIQUE — única origem legítima de human_verdict (rail do kickoff)
   async respondCurationVerdict(plant: string, body: CurationVerdictRequest): Promise<CurationVerdictResponse> {
