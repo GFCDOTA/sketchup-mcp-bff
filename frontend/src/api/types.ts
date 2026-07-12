@@ -716,6 +716,26 @@ export interface CurationVariant {
   gpt_porque?: string | null;
   gpt_caminho?: string | null;
   gpt_reviewed_at?: number | null;
+  /** rastro sintético do dispatcher (variant_id '__noc-' / renderer noc-evidence)
+   *  — não-revisável; a tela quarentena em vez de misturar com as reais */
+  synthetic?: boolean;
+}
+
+/** Uma passada do laço autônomo (curation_runs.jsonl, mais novo primeiro). */
+export interface CurationAutonomyRun {
+  t: number;
+  today: string;
+  trigger: "auto" | "manual";
+  n_selected: number;
+  n_reviewed: number;
+  remaining: number;
+  reviewed: { variant_id: string; nota: number | null; route: string | null }[];
+  enqueued_fixes: string[];
+}
+
+export interface CurationAutonomy {
+  runs: CurationAutonomyRun[];
+  last_t: number | null;
 }
 
 /** Agregação de um pattern por todo o corpus (Fatia 3 — "o que já aprendemos"). */
@@ -747,6 +767,8 @@ export interface CurationResponse {
   themes: string[];
   variants: CurationVariant[];
   patterns: CurationPatterns;
+  /** visibilidade do laço autônomo de revisão (últimas passadas do tick) */
+  autonomy?: CurationAutonomy;
 }
 
 /** GET /api/curation/plants */

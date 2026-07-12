@@ -184,6 +184,43 @@ class CurationMirrorTest(unittest.TestCase):
             status.unlink(missing_ok=True)
             review.unlink(missing_ok=True)
 
+    def test_autonomy_runs_and_synthetic_flag(self):
+        """Visibilidade do laço: curation_runs.jsonl vira `autonomy.runs` (mais novo
+        primeiro, teto 8); registro sintético do dispatcher ('__noc-'/noc-evidence)
+        sai marcado synthetic=True (quarentena na tela)."""
+        d = self.root / PLANT
+        runs = d / "curation_runs.jsonl"
+        runs.write_text(
+            json.dumps({"t": 100.0, "trigger": "auto", "n_selected": 2, "n_reviewed": 1,
+                        "remaining": 1, "reviewed": [{"variant_id": V1, "nota": 4,
+                                                      "route": "NEEDS_FIX"}],
+                        "enqueued_fixes": []}) + "\n"
+            + json.dumps({"t": 200.0, "trigger": "manual", "n_selected": 0,
+                          "n_reviewed": 0, "remaining": 0, "reviewed": [],
+                          "enqueued_fixes": []}) + "\n", "utf-8")
+        corpus = d / "corpus.jsonl"
+        synth_id = f"{PLANT}__noc-nf-x-visdrain-abc__warm__L0"
+        with corpus.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"variant_id": synth_id, "verdict": "PENDING_VISION",
+                                 "render_refs": {"iso": None, "renderer": "noc-evidence"},
+                                 "created_at": "2026-07-12T00:00:00Z"}) + "\n")
+        try:
+            view = self.cm.curation_view(PLANT)
+            auto = view["autonomy"]
+            self.assertEqual(auto["last_t"], 200.0)            # mais novo primeiro
+            self.assertEqual(auto["runs"][0]["trigger"], "manual")
+            self.assertEqual(auto["runs"][1]["reviewed"][0]["nota"], 4)
+            by = {x["variant_id"]: x for x in view["variants"]}
+            self.assertTrue(by[synth_id]["synthetic"])          # rastro → quarentena
+            self.assertFalse(by[V1]["synthetic"])               # real segue visível
+        finally:
+            runs.unlink(missing_ok=True)
+            # cleanup em BYTES: o corpus da fixture tem mojibake proposital —
+            # read_text('utf-8') estrito explode e write_text corromperia os bytes.
+            lines = corpus.read_bytes().splitlines(keepends=True)
+            corpus.write_bytes(b"".join(ln for ln in lines
+                                        if synth_id.encode() not in ln))
+
     def test_record_human_verdict_appends_and_never_touches_corpus(self):
         corpus = self.root / PLANT / "corpus.jsonl"
         hv = self.root / PLANT / "human_verdicts.jsonl"

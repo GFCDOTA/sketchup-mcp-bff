@@ -95,6 +95,16 @@ def _last_wins(recs: list[dict]) -> tuple[dict[str, dict], dict[str, int]]:
     return by, seen
 
 
+def _is_synthetic(rec: dict) -> bool:
+    """Evidência sintética de APARÊNCIA emitida pelo dispatcher (style=noc-<tid> →
+    variant_id com '__noc-', renderer 'noc-evidence') — NÃO é variante de sweep
+    revisável; foi pra VISUAL_REVIEW e ficou como rastro. Lockstep com
+    noc_dispatcher.is_appearance_evidence_variant (o BFF não importa o motor)."""
+    vid = str(rec.get("variant_id") or "")
+    renderer = str((rec.get("render_refs") or {}).get("renderer") or "")
+    return "__noc-" in vid or renderer == "noc-evidence"
+
+
 def _theme_of(variant_id: str, plant: str, params: dict) -> str:
     """Tema do registro; quando params.theme vem vazio (dado real de hoje), infere do
     variant_id `<plant>__<style>__<theme>__L<seed>` (kickoff: 'inferível do variant_id')."""
@@ -161,6 +171,8 @@ def _variant_summary(plant: str, rec: dict, revisions: int, human: dict | None,
         "gpt_porque": rv.get("porque"),
         "gpt_caminho": rv.get("caminho_pro_10"),
         "gpt_reviewed_at": rv.get("t"),
+        # rastro sintético do dispatcher (não-revisável) → a tela quarentena
+        "synthetic": _is_synthetic(rec),
     }
 
 
@@ -239,11 +251,16 @@ def curation_view(plant: str) -> dict:
     awaiting = sum(1 for v in variants
                    if v.get("verdict") != "PENDING_VISION" and not v.get("human_verdict"))
 
+    # visibilidade do laço autônomo: últimas passadas do curation_review (o motor
+    # grava curation_runs.jsonl por --apply; mais novo primeiro, teto 8)
+    runs = _read_jsonl_all(d / "curation_runs.jsonl")[-8:][::-1]
+    autonomy = {"runs": runs, "last_t": runs[0].get("t") if runs else None}
+
     fa.emit(f"data/runs/noc_variant_sweep/{plant}/corpus.jsonl", "read", "bff",
             repo=fa.REPO_ENGINE, endpoint=f"/api/curation/{plant}",
             label=f"curadoria: {len(variants)} variante(s), {awaiting} aguardando Felipe")
     return {"live": True, "plant": plant, "counts": counts, "awaiting_human": awaiting,
-            "themes": themes, "variants": variants,
+            "themes": themes, "variants": variants, "autonomy": autonomy,
             "patterns": _aggregate_patterns(variants)}
 
 

@@ -24,6 +24,7 @@ import { EmptyState, ErrorState } from "@/components/states";
 import { SkeletonText } from "@/components/ui/skeleton";
 import { staggerContainer, staggerItem } from "@/components/flow/animated-section";
 import { GptReviewBadge } from "@/components/gpt-review-badge";
+import { CurationAutonomyCard } from "@/components/curation-autonomy-card";
 import { cn } from "@/lib/utils";
 
 /* verdicts da MÁQUINA (CANDIDATE|FAIL|PENDING_VISION) — cores próprias */
@@ -83,10 +84,15 @@ export default function Curation() {
   // seleção múltipla p/ curadoria em LOTE (o Felipe julga N variantes de uma vez)
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastBatch, setLastBatch] = useState<CurationVerdictBatchResponse | null>(null);
+  // rastro sintético do dispatcher (variant_id "__noc-"): não-revisável, fica em
+  // QUARENTENA fora da vista por default — era a "tralha" que confundia a tela.
+  const [showSynthetic, setShowSynthetic] = useState(false);
+  const nSynthetic = (data?.variants ?? []).filter((v) => v.synthetic).length;
 
   const variants = (data?.variants ?? []).filter(
     (v) => (verdictFilter === "ALL" || v.verdict === verdictFilter)
-        && (themeFilter === "ALL" || v.theme === themeFilter),
+        && (themeFilter === "ALL" || v.theme === themeFilter)
+        && (showSynthetic || !v.synthetic),
   );
   // só variantes já julgadas pela máquina entram no lote (PENDING_VISION não é julgável)
   const judgeableVisible = variants.filter((v) => v.verdict !== "PENDING_VISION");
@@ -137,6 +143,9 @@ export default function Curation() {
           sub={data?.reason ?? "o loop autônomo ainda não produziu variantes"} /></Card>
       ) : (
         <div className="space-y-4">
+          {/* o que a revisão autônoma fez a cada tick (últimas passadas + fila) */}
+          <CurationAutonomyCard autonomy={data.autonomy} />
+
           {/* fotos em EVIDÊNCIA no topo (pedido do Felipe): filtros + grid agrupado por
               erro; a memória de design desce recolhida pro rodapé. */}
           {/* filtros por verdict máquina e por tema (kickoff, Fatia 1) */}
@@ -157,6 +166,19 @@ export default function Curation() {
                 <ListChecks className="mr-1 size-3.5" />
                 {allSelected ? "limpar seleção" : `selecionar ${judgeableVisible.length}`}
               </Button>
+            )}
+            {nSynthetic > 0 && (
+              <button
+                onClick={() => setShowSynthetic((s) => !s)}
+                className={cn(
+                  "rounded-full border px-2.5 py-0.5 text-[11px] transition-colors",
+                  showSynthetic
+                    ? "border-warn/40 bg-warn/15 text-warn"
+                    : "border-border text-muted-foreground/60 hover:text-foreground",
+                )}
+                title="rastros sintéticos do dispatcher (não-revisáveis) — fora da vista por default">
+                quarentena ({nSynthetic})
+              </button>
             )}
             {(data.awaiting_human ?? 0) > 0 && (
               <span className="ml-auto text-xs text-muted-foreground">
