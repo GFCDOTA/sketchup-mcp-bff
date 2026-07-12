@@ -1,7 +1,5 @@
 // nav.ts — registro de navegação do cockpit (consolidado: 5 destinos no Cockpit).
-import {
-  LayoutGrid, Boxes, Inbox, Images, Map, Palette, GitBranch, Stamp, type LucideIcon,
-} from "lucide-react";
+import { LayoutGrid, Inbox, Stamp, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   to: string;
@@ -17,23 +15,17 @@ export interface NavSection {
   items: NavItem[];
 }
 
+// Corte 2026-07-12 (Felipe: "deixa só o que vai ter ganho de progresso"; gap #2
+// da nota 8/10 do GPT era a nav inchada): 8 destinos → 3. Operação/NOC/Artefatos/
+// Como Funciona/Theme Lab saíram do MENU — as rotas seguem vivas por URL direto
+// (telas não deletadas; curation/overview carregam WIP de outra sessão).
 export const NAV: NavSection[] = [
   {
     title: "Cockpit",
     items: [
       { to: "/", label: "Hoje", icon: LayoutGrid, end: true },
-      { to: "/operacao", label: "Operação", icon: Boxes, badge: "runs" },
-      { to: "/decisions", label: "Decisões", icon: Inbox, badge: "decisions" },
       { to: "/curation", label: "Curadoria", icon: Stamp, badge: "curation" },
-      { to: "/noc", label: "NOC", icon: GitBranch },
-    ],
-  },
-  {
-    title: "Estúdio",
-    items: [
-      { to: "/artifacts", label: "Artefatos", icon: Images },
-      { to: "/flow", label: "Como Funciona", icon: Map },
-      { to: "/theme-lab", label: "Theme Lab", icon: Palette },
+      { to: "/decisions", label: "Decisões", icon: Inbox, badge: "decisions" },
     ],
   },
 ];

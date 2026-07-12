@@ -13,7 +13,7 @@ function currentLabel(pathname: string): string {
   const prefix = items
     .filter((i) => i.to !== "/" && pathname.startsWith(i.to))
     .sort((a, b) => b.to.length - a.to.length)[0];
-  return prefix?.label ?? "Visão Geral";
+  return prefix?.label ?? "Hoje";
 }
 
 export function Topbar() {
