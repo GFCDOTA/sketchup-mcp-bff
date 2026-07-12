@@ -36,6 +36,11 @@ services:
       # EXCEÇÃO: data/runs (scratch) montado :rw pro botão "Rodar agora" escrever o
       # gatilho do carteiro (carteiro_trigger). O atuador no host lê esse arquivo.
       - ../sketchup-mcp/data/runs:/repos/sketchup-mcp/data/runs:rw
+      # CORPUS de curadoria/galeria: vive no data/runs do WORKSPACE (E:\Claude\data\runs),
+      # mas o mirror lê /data/runs/noc_variant_sweep (ENGINE_ROOT.parent.parent=/). Sem
+      # este mount a aba Curadoria fica vazia. :rw pro clique de veredito gravar
+      # human_verdicts.jsonl no corpus. (2026-07-12)
+      - ../../data/runs:/data/runs:rw
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

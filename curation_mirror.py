@@ -345,21 +345,31 @@ _IMG_CTYPE = {".png": "image/png"}
 
 
 def variant_image(rel: str) -> tuple[bytes, str] | None:
-    """GET /variant-img/<plant>/<variant_id>/iso.png — thumbnail da variante (só .png).
-    `rel` inclui a planta; o guard é contra a raiz do sweep."""
+    """GET /variant-img/<plant>/<...> — thumbnail da variante (só .png).
+    `rel` pode ser RELATIVO ao corpus (variant_dir/iso.png) OU conter um path ABSOLUTO
+    do HOST embutido (E:\\Claude\\...\\artifacts\\...) — o corpus grava assim quando o
+    render vem de artifacts/. No container o absoluto do host não resolve, então também
+    traduzimos 'artifacts/....png' p/ o motor montado (ENGINE_ROOT). Guard por raiz."""
+    if not rel:
+        return None
+    norm = rel.replace("\\", "/")
+    candidates: list[tuple[Path, Path]] = []
     base = _sweep_root()
-    if not rel or not base.is_dir():
-        return None
-    try:
-        fp = (base / rel).resolve()
-        root = base.resolve()
-    except OSError:
-        return None
-    if root not in fp.parents:
-        return None
-    if fp.suffix.lower() not in _IMG_CTYPE or not fp.is_file():
-        return None
-    try:
-        return fp.read_bytes(), _IMG_CTYPE[fp.suffix.lower()]
-    except OSError:
-        return None
+    if base.is_dir():
+        candidates.append((base, base / rel))
+    m = re.search(r"(?:^|/)(artifacts/.+\.png)$", norm, re.IGNORECASE)
+    if m:
+        candidates.append((fa.ENGINE_ROOT / "artifacts", fa.ENGINE_ROOT / m.group(1)))
+    for root, fp in candidates:
+        try:
+            fpr, rootr = fp.resolve(), root.resolve()
+        except OSError:
+            continue
+        if rootr not in fpr.parents:
+            continue
+        if fpr.suffix.lower() in _IMG_CTYPE and fpr.is_file():
+            try:
+                return fpr.read_bytes(), _IMG_CTYPE[fpr.suffix.lower()]
+            except OSError:
+                continue
+    return None
