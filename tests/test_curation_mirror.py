@@ -235,7 +235,8 @@ class CurationMirrorTest(unittest.TestCase):
             self.assertEqual(rec, {"variant_id": V1, "human_verdict": "WORSE",
                                    "liked": False, "note": "teste",
                                    "tags": ["escuro"],  # dedup + tira vazio
-                                   "batch_id": "hv_single", "t": "2026-07-04T11:00:00Z"})
+                                   "batch_id": "hv_single", "t": "2026-07-04T11:00:00Z",
+                                   "render_sha": "abc"})  # o clique grava QUAL render julgou
             # rail: o corpus do MOTOR fica byte-a-byte intacto
             self.assertEqual(corpus.read_bytes(), corpus_before)
             self.assertEqual(len(hv.read_text("utf-8").splitlines()), hv_lines_before + 1)
@@ -399,3 +400,42 @@ class EmptySweepRootTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_click_records_render_sha_and_view_flags_stale(self):
+        """Passo 4 do ciclo de evolução: o clique grava o SHA do render julgado;
+        quando o gerador re-emite o MESMO variant_id com render novo, o view marca
+        stale=True (a UI nunca apresenta WORSE antigo como do render novo).
+        Veredito legado SEM sha: stale se o registro é mais novo que o clique."""
+        d = self.root / PLANT
+        corpus = d / "corpus.jsonl"
+        hv = d / "human_verdicts.jsonl"
+        base = {"params": {}, "geometry": {}, "machine_score": None,
+                "verdict": "CANDIDATE", "human_verdict": None}
+        with corpus.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({**base, "variant_id": "vsha", "created_at": "2026-07-12T10:00:00Z",
+                                 "render_refs": {"iso": "vsha/iso.png", "sha256": "sha-OLD"}}) + "\n")
+        try:
+            rec = self.cm.record_human_verdict(PLANT, "vsha", "WORSE")
+            self.assertEqual(rec["render_sha"], "sha-OLD")       # clique gravou o sha
+            view = self.cm.curation_view(PLANT)
+            by = {x["variant_id"]: x for x in view["variants"]}
+            self.assertFalse(by["vsha"]["human_verdict"]["stale"])  # mesmo render
+            with corpus.open("a", encoding="utf-8") as fh:       # gerador evolui
+                fh.write(json.dumps({**base, "variant_id": "vsha",
+                                     "created_at": "2026-07-12T21:00:00Z",
+                                     "render_refs": {"iso": "vsha/iso.png",
+                                                     "sha256": "sha-NEW"}}) + "\n")
+            view2 = self.cm.curation_view(PLANT)
+            by2 = {x["variant_id"]: x for x in view2["variants"]}
+            self.assertTrue(by2["vsha"]["human_verdict"]["stale"])  # render mudou
+            # legado sem sha: clique antigo + registro mais novo → stale por timestamp
+            with hv.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"variant_id": "vsha", "human_verdict": "WORSE",
+                                     "batch_id": "legacy", "t": "2026-07-12T09:00:00Z"}) + "\n")
+            view3 = self.cm.curation_view(PLANT)
+            by3 = {x["variant_id"]: x for x in view3["variants"]}
+            self.assertTrue(by3["vsha"]["human_verdict"]["stale"])
+        finally:
+            for f, needle in ((corpus, "vsha"), (hv, "vsha")):
+                lines = f.read_bytes().splitlines(keepends=True)
+                f.write_bytes(b"".join(ln for ln in lines if needle.encode() not in ln))

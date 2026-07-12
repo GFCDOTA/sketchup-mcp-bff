@@ -681,6 +681,10 @@ export interface HumanVerdict {
   liked?: boolean | null;
   tags?: string[];
   batch_id?: string | null;
+  /** sha do render que foi julgado (o clique grava; evolução re-emite o mesmo id) */
+  render_sha?: string | null;
+  /** true = o render atual do card NÃO é o que este veredito julgou */
+  stale?: boolean;
 }
 
 /** Uma variante julgada do corpus (last-wins do corpus.jsonl). */

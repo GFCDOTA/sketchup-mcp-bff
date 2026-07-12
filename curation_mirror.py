@@ -236,6 +236,14 @@ def curation_view(plant: str) -> dict:
                      "t": h.get("t"),
                      "liked": h.get("liked") if isinstance(h.get("liked"), bool) else None,
                      "tags": _clean_tags(h.get("tags")), "batch_id": h.get("batch_id")}
+            # o veredito vale pro render DA ÉPOCA: sha gravado ≠ sha atual → stale;
+            # veredito antigo SEM sha → stale se o registro (render) é mais novo que
+            # o clique (ISO compara como string). Sem t não afirma (honesto).
+            hsha, cur = h.get("render_sha"), _sha_of(rec)
+            if hsha:
+                human["stale"] = bool(cur and hsha != cur)
+            else:
+                human["stale"] = bool(h.get("t") and (rec.get("created_at") or "") > h["t"])
         elif isinstance(rec.get("human_verdict"), (dict, str)) and rec.get("human_verdict"):
             # inline no corpus (shape livre do schema) — o jsonl do clique tem precedência
             human = {"verdict": None, "note": "", "t": None, "inline": rec["human_verdict"]}
@@ -283,8 +291,13 @@ def _clean_tags(tags) -> list[str]:
     return out[:20]
 
 
+def _sha_of(rec: dict) -> str | None:
+    return ((rec.get("render_refs") or {}).get("sha256")) or None
+
+
 def _verdict_rec(variant_id: str, verdict: str, *, liked=None, note=None,
-                 tags=None, batch_id: str, t: str | None = None) -> dict:
+                 tags=None, batch_id: str, t: str | None = None,
+                 render_sha: str | None = None) -> dict:
     """Um registro curadoria_verdict.v1 — o ÚNICO shape que o BFF grava: variant_id,
     human_verdict, liked(bool|null), note, tags[], batch_id, t (conforme
     schemas/curadoria_verdict.schema.json do motor)."""
@@ -296,6 +309,9 @@ def _verdict_rec(variant_id: str, verdict: str, *, liked=None, note=None,
         "tags": _clean_tags(tags),
         "batch_id": batch_id,
         "t": t or _utcnow(),
+        # QUAL render foi julgado (evolução do gerador re-emite o MESMO variant_id
+        # com render novo — sem o sha, um WORSE antigo pareceria ser do render novo)
+        "render_sha": render_sha,
     }
 
 
@@ -327,7 +343,8 @@ def record_human_verdict(plant: str, variant_id: str, verdict: str,
     if variant_id not in known:
         return None
     rec = _verdict_rec(variant_id, verdict, liked=liked, note=note, tags=tags,
-                       batch_id=batch_id or _new_batch_id(), t=t)
+                       batch_id=batch_id or _new_batch_id(), t=t,
+                       render_sha=_sha_of(known[variant_id]))
     _append_verdicts(plant, [rec])
     fa.emit(f"data/runs/noc_variant_sweep/{plant}/human_verdicts.jsonl", "write", "human",
             repo=fa.REPO_ENGINE, endpoint=f"/api/curation/{plant}/verdict",
@@ -366,6 +383,7 @@ def record_human_verdicts_batch(plant: str, items: list,
             errors.append({"variant_id": vid, "error": "unknown_variant"})
             continue
         recs.append(_verdict_rec(vid, verdict, liked=it.get("liked"),
+                                 render_sha=_sha_of(known[vid]),
                                  note=it.get("note"), tags=it.get("tags"),
                                  batch_id=bid, t=ts))
     _append_verdicts(plant, recs)   # UM lock para os N appends

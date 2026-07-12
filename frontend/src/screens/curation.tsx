@@ -430,6 +430,12 @@ function VariantCard({ v, plant, onZoom, selected, onToggleSelect }: {
           {v.human_verdict?.verdict ? (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
               <Badge variant={HUMAN_BADGE[v.human_verdict.verdict]}>{v.human_verdict.verdict}</Badge>
+              {v.human_verdict.stale && (
+                <span className="rounded-sm border border-border/60 px-1 text-[9.5px] uppercase text-muted-foreground/60"
+                  title="você julgou uma versão anterior deste render — o card mostra o render novo">
+                  render anterior
+                </span>
+              )}
               {v.human_verdict.liked === true && <ThumbsUp className="size-3.5 text-ok" />}
               {v.human_verdict.liked === false && <ThumbsDown className="size-3.5 text-danger" />}
               {(v.human_verdict.tags ?? []).map((tg) => (
