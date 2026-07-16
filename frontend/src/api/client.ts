@@ -13,7 +13,7 @@ import type {
   CurationResponse, CurationPlantsResponse, CurationVerdictRequest, CurationVerdictResponse,
   CurationVerdictBatchItem, CurationVerdictBatchResponse,
   DecisionHistoryResponse, CarteiroRunsResponse, CarteiroRunResponse,
-  HojeResponse,
+  HojeResponse, PlantActionResponse,
 } from "./types";
 import { mocks } from "./mocks";
 
@@ -150,6 +150,16 @@ export const api = {
       note: "o atuador roda no proximo sweep (ate ~60s)",
     }));
     return http("/api/carteiro/run", { method: "POST", body: JSON.stringify({ source }) });
+  },
+  // PLANTA — abre a última no SketchUp desktop (ação de HOST; 503 se não-local/Windows)
+  async openLastPlant(): Promise<PlantActionResponse> {
+    if (USE_MOCKS) return delay().then(() => ({ ok: true, skp: "planta_74_furnished.skp", note: "abrindo (mock)" }));
+    return http("/api/plant/open", { method: "POST", body: "{}" });
+  },
+  // PLANTA — re-roda o furnish (mobiliada) no host, fire-and-forget (~min, abre o SketchUp)
+  async generateLastPlant(): Promise<PlantActionResponse> {
+    if (USE_MOCKS) return delay().then(() => ({ ok: true, note: "furnish rodando (mock)" }));
+    return http("/api/plant/generate", { method: "POST", body: "{}" });
   },
   async respondDecision(id: string, body: DecisionRespondRequest): Promise<DecisionRespondResponse> {
     if (USE_MOCKS) return delay().then(() => ({ ok: true }));

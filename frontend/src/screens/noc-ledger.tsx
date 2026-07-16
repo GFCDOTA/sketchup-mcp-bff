@@ -1,16 +1,19 @@
+import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   GitBranch, ServerCog, ShieldCheck, CircleDot, FileCheck2,
-  Activity, Boxes, Cpu, FolderGit2, Radio, Heart,
+  Activity, Boxes, Cpu, FolderGit2, Radio, Heart, ExternalLink, Wand2,
 } from "lucide-react";
 import {
   useNocLedger, useNocStatus,
   useBridgeHealth, useGateLive, useBridgeSessions, useBridgeGit, useBridgeSkp,
+  useOpenLastPlant, useGenerateLastPlant,
 } from "@/api/hooks";
-import type { NocTask, NocLockState } from "@/api/types";
+import type { NocTask, NocLockState, PlantActionResponse } from "@/api/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { EmptyState, ErrorState } from "@/components/states";
 import { SkeletonText } from "@/components/ui/skeleton";
 import { staggerContainer, staggerItem } from "@/components/flow/animated-section";
@@ -180,6 +183,7 @@ function SistemaSection() {
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
             <Boxes className="size-4 text-blue" /> .skp por planta
           </div>
+          <PlantActions latest={skp.data?.plants?.[0]?.latestSkp} />
           <div className="space-y-1.5">
             {(skp.data?.plants ?? []).map((p) => (
               <div key={p.plant} className="flex items-center gap-2 text-xs">
@@ -191,6 +195,44 @@ function SistemaSection() {
           </div>
         </CardContent></Card>
       </div>
+    </div>
+  );
+}
+
+/** Abrir a ÚLTIMA planta no SketchUp desktop / re-rodar o furnish (mobiliada). Ações de
+ *  HOST: só funcionam com o BFF rodando local no Windows (com SketchUp) — senão o botão
+ *  mostra a dica de degradação honesta. */
+function PlantActions({ latest }: { latest?: string }) {
+  const open = useOpenLastPlant();
+  const gen = useGenerateLastPlant();
+  const [msg, setMsg] = useState<{ text: string; bad: boolean } | null>(null);
+  const busy = open.isPending || gen.isPending;
+  const show = (r: PlantActionResponse) =>
+    setMsg({ text: r.ok ? (r.note ?? "ok") : (r.hint ?? r.error ?? "falhou"), bad: !r.ok });
+  const fail = (e: unknown) =>
+    setMsg({ text: e instanceof Error ? e.message : "falhou", bad: true });
+  return (
+    <div className="mb-2.5 space-y-1.5">
+      <div className="flex flex-wrap gap-1.5">
+        <Button size="sm" variant="accent" disabled={busy}
+          onClick={() => open.mutate(undefined, { onSuccess: show, onError: fail })}>
+          <ExternalLink /> {open.isPending ? "abrindo…" : "Abrir no SketchUp"}
+        </Button>
+        <Button size="sm" variant="secondary" disabled={busy}
+          onClick={() => gen.mutate(undefined, { onSuccess: show, onError: fail })}>
+          <Wand2 /> {gen.isPending ? "gerando…" : "Gerar (furnish)"}
+        </Button>
+      </div>
+      {latest && (
+        <div className="text-[11px] text-muted-foreground/60">
+          última: <code>{latest}</code>
+        </div>
+      )}
+      {msg && (
+        <div className={cn("text-[11px] leading-snug", msg.bad ? "text-danger" : "text-ok")}>
+          {msg.text}
+        </div>
+      )}
     </div>
   );
 }

@@ -81,6 +81,24 @@ export function useRunCarteiro() {
   });
 }
 
+/** Abre a ÚLTIMA planta no SketchUp desktop (ação de host). */
+export function useOpenLastPlant() {
+  return useMutation({ mutationFn: () => api.openLastPlant() });
+}
+
+/** Re-roda o furnish (mobiliada). Invalida o /api/bridge/skp (o novo .skp aparece
+ *  após o SketchUp materializar — re-checa alguns segundos depois). */
+export function useGenerateLastPlant() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.generateLastPlant(),
+    onSuccess: () => {
+      const bump = () => qc.invalidateQueries({ queryKey: qk.bridgeSkp });
+      bump(); window.setTimeout(bump, 10000);
+    },
+  });
+}
+
 export const useWorkflows = () => useQuery({ queryKey: qk.workflows, queryFn: api.workflows });
 
 export const useStudioState = () =>

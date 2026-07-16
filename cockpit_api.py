@@ -33,6 +33,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -411,6 +413,88 @@ def _status() -> dict:
             "time": _now()}
 
 
+# ── APM (Slice 1) — saúde + mais-chamados + gaps + pulso, do que JÁ é observável ──
+_ORACLE_8765 = os.environ.get("BFF_ORACLE", "http://host.docker.internal:8765").rstrip("/")
+
+
+def _probe_health(url: str, timeout: float = 2.0) -> tuple[bool, dict | None]:
+    """GET <url>; devolve (ok, json|None). Nunca levanta (probe de APM)."""
+    try:
+        with urlopen(url, timeout=timeout) as r:
+            return True, json.loads(r.read())
+    except (URLError, HTTPError, OSError, json.JSONDecodeError):
+        return False, None
+
+
+def _apm() -> dict:
+    """Telemetria APM Slice 1: saúde das peças + operações mais-chamadas + gaps
+    (erros) + pulso de atividade — SÓ do que já flui (event bus + status), sem
+    instrumentar o motor. Latência por operação = Slice 2 (tracer no motor)."""
+    from collections import Counter
+
+    st = _status()
+    oll = st["ollama"]
+    health = [
+        {"id": "bff", "label": "Cockpit BFF (:8782)", "online": True, "detail": "servindo"},
+        {"id": "engine", "label": "Motor (mirror por arquivo)",
+         "online": bool(st["upstream"]["ok"]), "detail": st["upstream"]["url"]},
+        {"id": "ollama", "label": f"Ollama · {oll['models']} modelos",
+         "online": bool(oll["ok"]), "detail": oll["url"]},
+    ]
+    ok765, _ = _probe_health(_ORACLE_8765 + "/health")
+    health.append({"id": "oracle", "label": "Oráculo :8765",
+                   "online": ok765, "detail": "no ar" if ok765 else "offline"})
+    okg, bodyg = _probe_health(GPT_DOCKER + "/health")
+    gdet = ("logado" if (bodyg or {}).get("logged_in") else "no ar (deslogado)") if okg else "offline"
+    health.append({"id": "gpt-docker", "label": "GPT-no-Docker :8899",
+                   "online": bool(okg and (bodyg or {}).get("logged_in")), "detail": gdet})
+
+    evs = fa.events(limit=1500).get("events", [])
+    nb, bw = 30, 10  # 30 buckets de 10s = janela de 5 min (throughput ao vivo)
+    now_dt = datetime.now(timezone.utc)
+    tl_count = [0] * nb
+    tl_err = [0] * nb
+    ok_n = err_n = 0
+    counts: Counter = Counter()
+    errs: Counter = Counter()
+    srcs: Counter = Counter()
+    for e in evs:
+        key = e.get("endpoint") or e.get("label") or f"{e.get('source', '?')}:{e.get('op', '?')}"
+        counts[key] += 1
+        srcs[e.get("source", "?")] += 1
+        is_err = e.get("status") == "error"
+        if is_err:
+            errs[key] += 1
+            err_n += 1
+        else:
+            ok_n += 1
+        try:
+            age = (now_dt - datetime.fromisoformat(e.get("ts", ""))).total_seconds()
+            b = int(age // bw)
+            if 0 <= b < nb:
+                idx = nb - 1 - b  # mais antigo à esquerda, mais novo à direita
+                tl_count[idx] += 1
+                if is_err:
+                    tl_err[idx] += 1
+        except (ValueError, TypeError):
+            pass
+    ops = [{"key": k, "count": c, "errors": errs.get(k, 0)} for k, c in counts.most_common(12)]
+    gaps = [{"key": k, "errors": n} for k, n in errs.most_common(8)]
+    pulse = [{"repo": e.get("repo"), "path": e.get("path"), "op": e.get("op"),
+              "source": e.get("source"), "status": e.get("status"), "ts": e.get("ts")}
+             for e in evs[-16:]][::-1]
+    timeline = [{"count": tl_count[i], "errors": tl_err[i]} for i in range(nb)]
+
+    return {"health": health, "ops": ops, "gaps": gaps, "pulse": pulse,
+            "timeline": timeline, "bucket_s": bw,
+            "status_split": {"ok": ok_n, "error": err_n},
+            "totals": {"events": len(evs), "sources": dict(srcs)},
+            "note": "Slice 1 = saúde + mais-chamados + gaps + pulso + throughput do que já é "
+                    "observável. Latência por operação e traces internos do gerador chegam no "
+                    "Slice 2 (tracer JSONL no motor).",
+            "ts": _now()}
+
+
 # ── runs (registry + runner STUB) ────────────────────────────────────────────
 def _seed_runs():
     global _SEEDED
@@ -570,6 +654,8 @@ def dispatch(h) -> bool:
         return _ok(h, data, code)
     if method == "GET" and path == "/api/agents":
         return _ok(h, {"agents": _derive_agents(_upstream_state())})
+    if method == "GET" and path == "/api/apm":
+        return _ok(h, _apm())
     if method == "GET" and path == "/api/workflows":
         return _ok(h, {"workflows": _derive_workflows(_upstream_state())})
     if method == "GET" and path == "/api/artifacts":
@@ -590,6 +676,11 @@ def dispatch(h) -> bool:
     # GATILHO do CARTEIRO — "Rodar agora": TOCA o arquivo, o atuador (host) roda no sweep
     if method == "POST" and path == "/api/carteiro/run":
         return _carteiro_run(h, _body(h))
+    # PLANTA — abrir a última no SketchUp / re-rodar o furnish (ações no HOST)
+    if method == "POST" and path == "/api/plant/open":
+        return _plant_open(h, _body(h))
+    if method == "POST" and path == "/api/plant/generate":
+        return _plant_generate(h, _body(h))
     # NOC (vidro read-only): runs/ledger REAIS do atuador + saude do lock — lidos de arquivo
     if method == "GET" and path == "/api/noc/ledger":
         return _ok(h, noc.ledger_view())
@@ -741,6 +832,90 @@ def _carteiro_run(h, body: dict) -> bool:
                        "hint": "motor montado read-only — o gatilho só funciona com data/runs gravável",
                        "detail": str(e)}, 503)
     return _ok(h, res)
+
+
+# ── PLANTA: abrir/gerar a ÚLTIMA planta (ações no HOST — SketchUp/venv) ─────────────────
+# Abrir e gerar rodam SUBPROCESS no host: abrir = SketchUp.exe <skp>; gerar = re-roda o
+# furnish (mobiliada). Só funcionam com o BFF rodando LOCAL no Windows (com SketchUp);
+# num container Linux :ro degradam 503 honesto (não há SU nem host desktop) — espelho de
+# _decide/_carteiro_run. Fire-and-forget: dispara destacado e volta na hora.
+SKETCHUP_EXE = os.environ.get(
+    "SKETCHUP_EXE", r"C:\Program Files\SketchUp\SketchUp 2026\SketchUp\SketchUp.exe")
+_DETACHED = getattr(subprocess, "DETACHED_PROCESS", 0)
+
+
+def _engine_python() -> str:
+    """Python do venv do motor (onde o furnish tem as deps); fallback = o do BFF."""
+    vp = fa.ENGINE_ROOT / ".venv" / "Scripts" / "python.exe"
+    return str(vp) if vp.is_file() else sys.executable
+
+
+def _last_plant_skp() -> Path | None:
+    """.skp da ÚLTIMA planta criada = o mais novo (mtime) em artifacts/<plant>/ —
+    mesma fonte do /api/bridge/skp (bridge_mirror.skp_view). None se não houver."""
+    art = fa.ENGINE_ROOT / "artifacts"
+    if not art.is_dir():
+        return None
+    newest: Path | None = None
+    newest_m = -1.0
+    for pd in art.iterdir():
+        if not pd.is_dir():
+            continue
+        for sk in pd.rglob("*.skp"):
+            m = sk.stat().st_mtime
+            if m > newest_m:
+                newest, newest_m = sk, m
+    return newest
+
+
+def _host_guard() -> tuple[dict, int] | None:
+    """None se dá pra rodar ação de host; senão (erro, code). SU só existe no Windows."""
+    if os.name != "nt":
+        # 200 ok:false (degradação esperada) -> o botão mostra a dica, não um erro cru.
+        return ({"ok": False, "error": "host_action_unavailable",
+                 "hint": "abrir/gerar planta só funciona com o BFF rodando LOCAL no "
+                         "Windows (com SketchUp) — num container não há SU nem desktop."}, 200)
+    return None
+
+
+def _plant_open(h, body: dict) -> bool:
+    """POST /api/plant/open — abre a ÚLTIMA planta no SketchUp desktop (host)."""
+    guard = _host_guard()
+    if guard:
+        return _ok(h, guard[0], guard[1])
+    skp = _last_plant_skp()
+    if skp is None:
+        return _ok(h, {"ok": False, "error": "no_plant",
+                       "hint": "nenhum .skp em artifacts/<plant>/"}, 200)
+    exe = Path(SKETCHUP_EXE)
+    if not exe.is_file():
+        return _ok(h, {"ok": False, "error": "sketchup_not_found",
+                       "hint": f"SketchUp.exe não achado em {SKETCHUP_EXE} (defina SKETCHUP_EXE)"}, 200)
+    try:
+        subprocess.Popen([str(exe), str(skp)], creationflags=_DETACHED,
+                         close_fds=True)
+    except OSError as e:
+        return _ok(h, {"ok": False, "error": "launch_failed", "detail": str(e)}, 500)
+    return _ok(h, {"ok": True, "skp": skp.name, "note": f"abrindo {skp.name} no SketchUp…"})
+
+
+def _plant_generate(h, body: dict) -> bool:
+    """POST /api/plant/generate — re-roda o furnish (mobiliada) no host, destacado."""
+    guard = _host_guard()
+    if guard:
+        return _ok(h, guard[0], guard[1])
+    engine = fa.ENGINE_ROOT
+    if not (engine / "tools" / "furnish_apartment.py").is_file():
+        return _ok(h, {"ok": False, "error": "furnish_missing",
+                       "hint": "tools/furnish_apartment.py ausente no motor"}, 200)
+    try:
+        subprocess.Popen([_engine_python(), "-m", "tools.furnish_apartment"],
+                         cwd=str(engine), creationflags=_DETACHED, close_fds=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        return _ok(h, {"ok": False, "error": "launch_failed", "detail": str(e)}, 500)
+    return _ok(h, {"ok": True, "note": "furnish rodando no host — o SketchUp abre e "
+                   "materializa planta_74_furnished.skp (~min) em artifacts/planta_74/furnished/."})
 
 
 def _curation_verdict(h, plant: str, body: dict) -> bool:

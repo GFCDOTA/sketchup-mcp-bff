@@ -956,6 +956,17 @@ export interface CarteiroRunResponse {
   detail?: string;
 }
 
+/** Resposta das ações de planta (abrir no SketchUp / re-rodar o furnish). Ações de
+ *  HOST — degradam 503 honesto se o BFF não roda local no Windows com SketchUp. */
+export interface PlantActionResponse {
+  ok: boolean;
+  skp?: string;
+  note?: string;
+  error?: string;
+  hint?: string;
+  detail?: string;
+}
+
 /** Um acionamento (drain) do carteiro, projetado pelo mirror: quando rodou, o que
  *  disparou, quantas decidiu e como se distribuíram. */
 export interface CarteiroRunRecord {
